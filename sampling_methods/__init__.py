@@ -1,2 +1,2 @@
-from .descriptor import *
-from .selector import *
+from .descriptors import *
+from .selectors import *
