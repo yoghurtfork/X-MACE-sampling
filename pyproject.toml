@@ -9,4 +9,4 @@ description = "Sampling methods for X-MACE transfer learning"
 requires-python = ">=3.11"
 
 [tool.setuptools]
-packages = ["sampling_methods"]
+packages = ["sampling_methods","utils"]
