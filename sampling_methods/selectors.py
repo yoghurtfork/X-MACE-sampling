@@ -1,4 +1,5 @@
 from skmatter.sample_selection import FPS
+from sklearn.cluster import KMeans
 import numpy as np
 
 def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
@@ -6,15 +7,18 @@ def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
     Router to the appropriate selector function. 
         - "random_sampling"
         - "farthest_point_sampling"
+        - "k_means_clustering"
     """
     if selector_type == "farthest_point_sampling":
         return farthest_point_sampling(descriptor_matrix, n_to_select, **kwargs)
     elif selector_type == "random_sampling":
         return random_sampling(descriptor_matrix, n_to_select)
+    elif selector_type == "k_means_clustering":
+        return k_means_clustering(descriptor_matrix, n_to_select, **kwargs)
     else:
         raise ValueError(
             f"Unknown selector type: {selector_type}. "
-            f"Supported types: 'farthest_point_sampling', 'random_sampling'"
+            f"Supported types: 'farthest_point_sampling', 'random_sampling', 'k_means_clustering'"
         )
 
 def random_sampling(descriptor_matrix, n_to_select):
@@ -78,3 +82,29 @@ def farthest_point_sampling(descriptor_matrix, n_to_select, initialize=0):
         )
         selector.fit(descriptor_matrix)
         return selector.selected_idx_
+
+def k_means_clustering(descriptor_matrix, n_to_select, n_clusters="n_to_select", random_state=42):
+    """
+    Use k-means clustering to select n_to_select samples.
+    If n_clusters is specified, it will be used to determine the number of clusters.
+    Else by default, n_clusters will be set to n_to_select, ie one sample per cluster.
+    """
+
+    if n_clusters == "n_to_select":
+        n_clusters = n_to_select
+    samples_per_cluster = n_to_select // n_clusters
+
+    kmeans = KMeans(n_clusters=n_clusters, random_state=random_state)
+    kmeans.fit(descriptor_matrix)
+    cluster_centers = kmeans.cluster_centers_
+    
+    # Find the closest sample(s) to each cluster center
+    selected_indices = []
+    for center in cluster_centers:
+        distances = np.linalg.norm(descriptor_matrix - center, axis=1)
+        for _ in range(samples_per_cluster):
+            closest_idx = np.argmin(distances)
+            selected_indices.append(closest_idx)
+            distances[closest_idx] = np.inf  # Exclude this index from future selections
+    
+    return np.array(selected_indices)
