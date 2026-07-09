@@ -2,12 +2,13 @@ import numpy as np
 from ase.neighborlist import NeighborList, natural_cutoffs
 import torch
 
-def get_descriptor(descriptor_type, atoms):
+def get_descriptor(descriptor_type, atoms, encoder=None):
     """
     Router to the appropriate descriptor function. 
         - "bond_lengths": C-C bond lengths
         - "bond_angles": C-C-C bond angles
-        - "energies": energies
+        - "energies": energies of the ASE Atoms object
+        - "encoded_energies": energies encoded into a latent space representation using the XMACE encoder
     """
     if descriptor_type == "bond_lengths":
         return get_bond_lengths(atoms)
@@ -15,10 +16,12 @@ def get_descriptor(descriptor_type, atoms):
         return get_bond_angles(atoms)
     elif descriptor_type == "energies":
         return get_energies(atoms)
+    elif descriptor_type == "encoded_energies":
+        return get_encoded_energies(atoms, encoder)
     else:
         raise ValueError(
             f"Unknown descriptor type: {descriptor_type}. "
-            f"Supported types: 'bond_lengths', 'bond_angles', 'energies'"
+            f"Supported types: 'bond_lengths', 'bond_angles', 'energies', 'encoded_energies'"
         )
 
 def get_bond_lengths(atoms):
@@ -120,17 +123,18 @@ def get_encoded_energies(atoms, encoder):
     energies = get_energies(atoms)
 
     # Prepare tensor with shape [batch=1, num_items, feature_dim=1]
-    x = torch.tensor(energies, dtype=torch.get_default_dtype()).reshape(1, -1, 1)
-
+    energies_tensor = torch.tensor(energies, dtype=torch.get_default_dtype()).reshape(1, -1, 1)
+    
     # Move to encoder device if possible
+    '''
     try:
         params = list(encoder.parameters())
         device = params[0].device if params else torch.device("cpu")
     except Exception:
         device = torch.device("cpu")
-
-    x = x.to(device)
+    energies_tensor = energies_tensor.to(device)
+    '''
 
     # Run encoder and return a Python list of encoded values for the single geometry
-    encoded_energies = encoder(x)  # [1, latent_dim]
+    encoded_energies = encoder(energies_tensor)  # [1, latent_dim]
     return encoded_energies.squeeze(0).cpu().tolist()
