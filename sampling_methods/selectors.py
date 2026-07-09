@@ -88,6 +88,8 @@ def k_means_clustering(descriptor_matrix, n_to_select, n_clusters="n_to_select",
     Use k-means clustering to select n_to_select samples.
     If n_clusters is specified, it will be used to determine the number of clusters.
     Else by default, n_clusters will be set to n_to_select, ie one sample per cluster.
+
+    random_state: Random seed for reproducibility. Default: 42
     """
 
     if n_clusters == "n_to_select":

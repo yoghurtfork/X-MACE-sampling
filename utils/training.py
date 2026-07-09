@@ -25,6 +25,7 @@ class ModelTrainingResult:
     avg_num_neighbors: float
     n_energies: int
     device: torch.device
+    encoder: torch.nn.Module
 
 def add_autoencoder_targets(active_model, batch, output):
     """Add autoencoder targets to output for loss computation."""
@@ -240,4 +241,5 @@ def train_model(
         avg_num_neighbors=avg_num_neighbors,
         n_energies=n_energies,
         device=device,
+        encoder=model.perm_encoder
     )

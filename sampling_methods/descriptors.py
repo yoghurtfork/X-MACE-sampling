@@ -1,12 +1,13 @@
 import numpy as np
 from ase.neighborlist import NeighborList, natural_cutoffs
+import torch
 
 def get_descriptor(descriptor_type, atoms):
     """
     Router to the appropriate descriptor function. 
         - "bond_lengths": C-C bond lengths
         - "bond_angles": C-C-C bond angles
-        - "energies": energies of the ASE Atoms object
+        - "energies": energies
     """
     if descriptor_type == "bond_lengths":
         return get_bond_lengths(atoms)
@@ -110,3 +111,26 @@ def get_bond_angles(atoms):
 def get_energies(atoms):
     """Return the energies of the ASE Atoms object."""
     return atoms.info["REF_energy"][0]
+
+def get_encoded_energies(atoms, encoder):
+    """
+    Return the encoded energies of the ASE Atoms object.
+    This uses the same encoder that X-MACE uses to encode the energies into a latent space representation.
+    """
+    energies = get_energies(atoms)
+
+    # Prepare tensor with shape [batch=1, num_items, feature_dim=1]
+    x = torch.tensor(energies, dtype=torch.get_default_dtype()).reshape(1, -1, 1)
+
+    # Move to encoder device if possible
+    try:
+        params = list(encoder.parameters())
+        device = params[0].device if params else torch.device("cpu")
+    except Exception:
+        device = torch.device("cpu")
+
+    x = x.to(device)
+
+    # Run encoder and return a Python list of encoded values for the single geometry
+    encoded_energies = encoder(x)  # [1, latent_dim]
+    return encoded_energies.squeeze(0).cpu().tolist()
