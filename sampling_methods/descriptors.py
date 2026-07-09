@@ -91,7 +91,7 @@ def get_bond_angles(atoms):
             int(idx) for idx in neighbor_indices if symbols[int(idx)] == "C"
         ]
 
-        # Calculate angles for all pairs of carbon neighbors
+        # Calculate angles for all pairsof carbon neighbors
         for i, neighbor1_idx in enumerate(c_neighbors):
             for neighbor2_idx in c_neighbors[i + 1 :]:
                 triplet = tuple(sorted((neighbor1_idx, center_idx, neighbor2_idx)))
