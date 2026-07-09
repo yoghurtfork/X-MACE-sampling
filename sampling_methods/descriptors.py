@@ -6,15 +6,18 @@ def get_descriptor(descriptor_type, atoms):
     Router to the appropriate descriptor function. 
         - "bond_lengths": C-C bond lengths
         - "bond_angles": C-C-C bond angles
+        - "energies": energies of the ASE Atoms object
     """
     if descriptor_type == "bond_lengths":
         return get_bond_lengths(atoms)
     elif descriptor_type == "bond_angles":
         return get_bond_angles(atoms)
+    elif descriptor_type == "energies":
+        return get_energies(atoms)
     else:
         raise ValueError(
             f"Unknown descriptor type: {descriptor_type}. "
-            f"Supported types: 'bond_lengths', 'bond_angles'"
+            f"Supported types: 'bond_lengths', 'bond_angles', 'energies'"
         )
 
 def get_bond_lengths(atoms):
@@ -103,3 +106,7 @@ def get_bond_angles(atoms):
                 bond_angles.append(angle)
 
     return bond_angles
+
+def get_energies(atoms):
+    """Return the energies of the ASE Atoms object."""
+    return atoms.info["REF_energy"][0]
