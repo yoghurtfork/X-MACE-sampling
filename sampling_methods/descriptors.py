@@ -1,6 +1,7 @@
 import numpy as np
 from ase.neighborlist import NeighborList, natural_cutoffs
 import torch
+from dscribe.descriptors import SOAP
 
 def get_descriptor(descriptor_type, atoms, encoder=None):
     """
@@ -9,11 +10,14 @@ def get_descriptor(descriptor_type, atoms, encoder=None):
         - "bond_angles": C-C-C bond angles
         - "energies": energies of the ASE Atoms object
         - "encoded_energies": energies encoded into a latent space representation using the XMACE encoder
+        - "soap": SOAP descriptor using the DScribe library
     """
     if descriptor_type == "bond_lengths":
         return get_bond_lengths(atoms)
     elif descriptor_type == "bond_angles":
         return get_bond_angles(atoms)
+    elif descriptor_type == "soap":
+        return get_soap(atoms)
     elif descriptor_type == "energies":
         return get_energies(atoms)
     elif descriptor_type == "encoded_energies":
@@ -21,7 +25,7 @@ def get_descriptor(descriptor_type, atoms, encoder=None):
     else:
         raise ValueError(
             f"Unknown descriptor type: {descriptor_type}. "
-            f"Supported types: 'bond_lengths', 'bond_angles', 'energies', 'encoded_energies'"
+            f"Supported types: 'bond_lengths', 'bond_angles', 'soap', 'energies', 'encoded_energies'"
         )
 
 def get_bond_lengths(atoms):
@@ -138,3 +142,29 @@ def get_encoded_energies(atoms, encoder):
     # Run encoder and return a Python list of encoded values for the single geometry
     encoded_energies = encoder(energies_tensor)  # [1, latent_dim]
     return encoded_energies.squeeze(0).cpu().tolist()
+
+def get_soap(atoms):
+    """
+    Return the SOAP descriptor using the DScribe library.
+    SOAP (Smooth Overlap of Atomic Positions) captures the local environment around each atom
+    by replacing each neighbour with a smooth Gaussian density.
+    The SOAP descriptors for each atom are concatenated into a single vector.
+    """
+
+    # Create a SOAP descriptor object
+    soap = SOAP(
+        species=["C","H"],
+        periodic=False,
+        r_cut=5.0,
+        n_max=8,
+        l_max=6,
+        sigma=0.5,
+    )
+
+    # Compute the SOAP descriptor for the atoms
+    soap_descriptor = soap.create(atoms)
+
+    # Concatenate into a list
+    soap_descriptor = soap_descriptor.flatten().tolist()
+
+    return soap_descriptor
