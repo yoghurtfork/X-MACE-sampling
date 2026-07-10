@@ -1,5 +1,5 @@
 from skmatter.sample_selection import FPS
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, Birch
 import numpy as np
 
 def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
@@ -8,6 +8,7 @@ def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
         - "random_sampling"
         - "farthest_point_sampling"
         - "k_means_clustering"
+        - "birch"
     """
     if selector_type == "farthest_point_sampling":
         return farthest_point_sampling(descriptor_matrix, n_to_select, **kwargs)
@@ -15,10 +16,12 @@ def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
         return random_sampling(descriptor_matrix, n_to_select)
     elif selector_type == "k_means_clustering":
         return k_means_clustering(descriptor_matrix, n_to_select, **kwargs)
+    elif selector_type == "birch":
+        return birch(descriptor_matrix, n_to_select, **kwargs)
     else:
         raise ValueError(
             f"Unknown selector type: {selector_type}. "
-            f"Supported types: 'farthest_point_sampling', 'random_sampling', 'k_means_clustering'"
+            f"Supported types: 'farthest_point_sampling', 'random_sampling', 'k_means_clustering', 'birch'"
         )
 
 def random_sampling(descriptor_matrix, n_to_select):
@@ -86,8 +89,7 @@ def farthest_point_sampling(descriptor_matrix, n_to_select, initialize=0):
 def k_means_clustering(descriptor_matrix, n_to_select, n_clusters="n_to_select", random_state=42):
     """
     Use k-means clustering to select n_to_select samples.
-    If n_clusters is specified, it will be used to determine the number of clusters.
-    Else by default, n_clusters will be set to n_to_select, ie one sample per cluster.
+    If n_clusters is not specified, it will be set to n_to_select, ie one sample per cluster.
 
     random_state: Random seed for reproducibility. Default: 42
     """
@@ -100,13 +102,42 @@ def k_means_clustering(descriptor_matrix, n_to_select, n_clusters="n_to_select",
     kmeans.fit(descriptor_matrix)
     cluster_centers = kmeans.cluster_centers_
     
-    # Find the closest sample(s) to each cluster center
     selected_indices = []
     for center in cluster_centers:
         distances = np.linalg.norm(descriptor_matrix - center, axis=1)
-        for _ in range(samples_per_cluster):
-            closest_idx = np.argmin(distances)
+        for _ in range(samples_per_cluster): # Add the closest sample(s) to each cluster center
+            closest_idx = np.argmin(distances) 
             selected_indices.append(closest_idx)
             distances[closest_idx] = np.inf  # Exclude this index from future selections
     
     return np.array(selected_indices)
+
+def birch(descriptor_matrix, n_to_select, n_clusters="n_to_select", threshold=0.1, branching_factor=50):
+    """
+    Use BIRCH algorithm to select n_to_select samples.
+    If n_clusters is not specified, it will be set to n_to_select, ie one sample per cluster.
+
+    threshold: Radius which controls the formation of clusters. Default: 0.1.
+    branching_factor: Maximum number of subclusters in each node. Default: 50.
+    """
+
+    if n_clusters == "n_to_select":
+        n_clusters = n_to_select
+    samples_per_cluster = n_to_select // n_clusters
+
+    birch = Birch(n_clusters=n_clusters, threshold=threshold, branching_factor=branching_factor)
+    birch.fit(descriptor_matrix)
+    labels = birch.labels_
+
+    selected_indices = []
+    for label in np.unique(labels):
+        members = np.where(labels == label)[0]
+        center = descriptor_matrix[members].mean(axis=0) # Find cluster center
+
+        distances = np.linalg.norm(descriptor_matrix - center, axis=1)
+        for _ in range(samples_per_cluster): # Add the closest sample(s) to each cluster center
+            closest_idx = np.argmin(distances) 
+            selected_indices.append(closest_idx)
+            distances[closest_idx] = np.inf  # Exclude this index from future selections
+
+    return np.array(selected_indices)    
