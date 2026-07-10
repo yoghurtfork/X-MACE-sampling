@@ -1,7 +1,67 @@
 import numpy as np
 from ase.neighborlist import NeighborList, natural_cutoffs
 import torch
-from dscribe.descriptors import SOAP, ACSF
+from dscribe.descriptors import SOAP, ACSF, MBTR
+from dscribe.core import system as dscribe_system
+
+def _patch_dscribe_system_init_keyword_args():
+    """Patch DScribe System.__init__ to pass keyword args to ASE.
+
+    DScribe creates `System` objects using positional args, but ASE's
+    `_LimitedAtoms.__init__` has a `velocities` parameter after `info`.
+    This mismatch can cause `TypeError: Use only one of "momenta" and "velocities"`.
+    """
+    if getattr(dscribe_system.System, "_patched_init_with_keyword_args", False):
+        return
+
+    def _patched_init(
+        self,
+        symbols=None,
+        positions=None,
+        numbers=None,
+        tags=None,
+        momenta=None,
+        masses=None,
+        magmoms=None,
+        charges=None,
+        scaled_positions=None,
+        cell=None,
+        pbc=None,
+        celldisp=None,
+        constraint=None,
+        calculator=None,
+        info=None,
+        wyckoff_positions=None,
+        equivalent_atoms=None,
+    ):
+        super(dscribe_system.System, self).__init__(
+            symbols=symbols,
+            positions=positions,
+            numbers=numbers,
+            tags=tags,
+            momenta=momenta,
+            masses=masses,
+            magmoms=magmoms,
+            charges=charges,
+            scaled_positions=scaled_positions,
+            cell=cell,
+            pbc=pbc,
+            celldisp=celldisp,
+            constraint=constraint,
+            calculator=calculator,
+            info=info,
+        )
+        self.wyckoff_positions = wyckoff_positions
+        self.equivalent_atoms = equivalent_atoms
+        self._cell_inverse = None
+        self._displacement_tensor = None
+        self._distance_matrix = None
+        self._inverse_distance_matrix = None
+
+    dscribe_system.System.__init__ = _patched_init
+    dscribe_system.System._patched_init_with_keyword_args = True
+
+_patch_dscribe_system_init_keyword_args()
 
 def get_descriptor(descriptor_type, atoms, encoder=None):
     """
@@ -12,6 +72,7 @@ def get_descriptor(descriptor_type, atoms, encoder=None):
         - "encoded_energies": energies encoded into a latent space representation using the XMACE encoder
         - "soap": SOAP descriptor using the DScribe library
         - "acsf": ACSF descriptor using the DScribe library
+        - "mbtr": MBTR descriptor using the DScribe library
     """
     if descriptor_type == "bond_lengths":
         return get_bond_lengths(atoms)
@@ -21,6 +82,8 @@ def get_descriptor(descriptor_type, atoms, encoder=None):
         return get_soap(atoms)
     elif descriptor_type == "acsf":
         return get_acsf(atoms)
+    elif descriptor_type == "mbtr":
+        return get_mbtr(atoms)
     elif descriptor_type == "energies":
         return get_energies(atoms)
     elif descriptor_type == "encoded_energies":
@@ -28,7 +91,7 @@ def get_descriptor(descriptor_type, atoms, encoder=None):
     else:
         raise ValueError(
             f"Unknown descriptor type: {descriptor_type}. "
-            f"Supported types: 'bond_lengths', 'bond_angles', 'soap', 'acsf', 'energies', 'encoded_energies'"
+            f"Supported types: 'bond_lengths', 'bond_angles', 'soap', 'acsf', 'mbtr', 'energies', 'encoded_energies'"
         )
 
 def get_bond_lengths(atoms):
@@ -209,3 +272,50 @@ def get_acsf(atoms):
     acsf_descriptor = acsf_descriptor.flatten().tolist()
 
     return acsf_descriptor
+
+def get_mbtr(atoms):
+    """
+    Return the MBTR descriptor using the DScribe library.
+    MBTR (Many-Body Tensor Representation) describes the molecular geometry
+    by capturing the distributions of distances/angles.
+    The distribution for distances and distribution for angles are concatenated together.
+    """
+
+    # Create an MBTR descriptor object for distances
+    mbtr_k2 = MBTR(
+        species=["C", "H"],
+        geometry={"function": "inverse_distance"},
+        grid={
+            "min": 0.0,
+            "max": 1.1,
+            "sigma": 0.02,
+            "n": 75,
+        },
+        weighting={"function": "unity"},
+        normalization="l2",
+        periodic=False
+    )
+    
+    # Create an MBTR descriptor object for angles
+    mbtr_k3 = MBTR(
+        species=["C", "H"],
+        geometry={"function": "angle"},
+        grid={
+            "min": 0.0,
+            "max": 180.0,
+            "sigma": 3.0,
+            "n": 90,
+        },
+        weighting={"function": "unity"},
+        normalization="l2",
+        periodic=False
+    )
+    
+    # Compute the MBTR descriptors
+    mbtr_descriptor_k2 = mbtr_k2.create(atoms)
+    mbtr_descriptor_k3 = mbtr_k3.create(atoms)
+
+    # Concatenate
+    mbtr_descriptor = np.concatenate([mbtr_descriptor_k2, mbtr_descriptor_k3])
+
+    return mbtr_descriptor
