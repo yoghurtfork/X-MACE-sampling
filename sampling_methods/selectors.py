@@ -1,5 +1,5 @@
 from skmatter.sample_selection import FPS
-from sklearn.cluster import KMeans, Birch
+from sklearn.cluster import KMeans, Birch, DBSCAN
 import numpy as np
 
 def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
@@ -9,6 +9,7 @@ def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
         - "farthest_point_sampling"
         - "k_means_clustering"
         - "birch"
+        - "dbscan"
     """
     if selector_type == "farthest_point_sampling":
         return farthest_point_sampling(descriptor_matrix, n_to_select, **kwargs)
@@ -18,6 +19,8 @@ def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
         return k_means_clustering(descriptor_matrix, n_to_select, **kwargs)
     elif selector_type == "birch":
         return birch(descriptor_matrix, n_to_select, **kwargs)
+    elif selector_type == "dbscan":
+        return dbscan(descriptor_matrix, n_to_select, **kwargs)
     else:
         raise ValueError(
             f"Unknown selector type: {selector_type}. "
@@ -90,6 +93,7 @@ def k_means_clustering(descriptor_matrix, n_to_select, n_clusters="n_to_select",
     """
     Use k-means clustering to select n_to_select samples.
     If n_clusters is not specified, it will be set to n_to_select, ie one sample per cluster.
+    If n_clusters is specified, it samples equally from clusters, taking the samples closest to cluster centers.
 
     random_state: Random seed for reproducibility. Default: 42
     """
@@ -116,9 +120,10 @@ def birch(descriptor_matrix, n_to_select, n_clusters="n_to_select", threshold=0.
     """
     Use BIRCH algorithm to select n_to_select samples.
     If n_clusters is not specified, it will be set to n_to_select, ie one sample per cluster.
-
-    threshold: Radius which controls the formation of clusters. Default: 0.1.
-    branching_factor: Maximum number of subclusters in each node. Default: 50.
+    If n_clusters is specified, it samples equally from clusters, taking the samples closest to cluster centers.
+    
+    threshold: Radius which controls the formation of clusters. Default: 0.1
+    branching_factor: Maximum number of subclusters in each node. Default: 50
     """
 
     if n_clusters == "n_to_select":
@@ -141,3 +146,32 @@ def birch(descriptor_matrix, n_to_select, n_clusters="n_to_select", threshold=0.
             distances[closest_idx] = np.inf  # Exclude this index from future selections
 
     return np.array(selected_indices)    
+
+def dbscan(descriptor_matrix, n_to_select, eps=0.5, min_samples=5):
+    '''
+    Use DBSCAN to select n_to_select samples.
+    It samples equally from clusters, taking the samples closest to cluster centers.
+
+    eps: DBSCAN epsilon parameter. Default: 0.5
+    min_samples: DBSCAN min_samples parameter. Default: 5
+    '''
+
+    db = DBSCAN(eps=eps, min_samples=min_samples)
+    db.fit(descriptor_matrix)
+    labels = db.labels_
+
+    n_clusters = len(np.unique_counts(labels))
+    samples_per_cluster = n_to_select // n_clusters
+
+    selected_indices = []
+    for label in np.unique(labels):
+        members = np.where(labels == label)[0]
+        center = descriptor_matrix[members].mean(axis=0) # Find cluster center
+
+        distances = np.linalg.norm(descriptor_matrix - center, axis=1)
+        for _ in range(samples_per_cluster): # Add the closest sample(s) to each cluster center
+            closest_idx = np.argmin(distances) 
+            selected_indices.append(closest_idx)
+            distances[closest_idx] = np.inf  # Exclude this index from future selections
+
+    return np.array(selected_indices) 
