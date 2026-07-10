@@ -1,7 +1,7 @@
 import numpy as np
 from ase.neighborlist import NeighborList, natural_cutoffs
 import torch
-from dscribe.descriptors import SOAP
+from dscribe.descriptors import SOAP, ACSF
 
 def get_descriptor(descriptor_type, atoms, encoder=None):
     """
@@ -11,6 +11,7 @@ def get_descriptor(descriptor_type, atoms, encoder=None):
         - "energies": energies of the ASE Atoms object
         - "encoded_energies": energies encoded into a latent space representation using the XMACE encoder
         - "soap": SOAP descriptor using the DScribe library
+        - "acsf": ACSF descriptor using the DScribe library
     """
     if descriptor_type == "bond_lengths":
         return get_bond_lengths(atoms)
@@ -18,6 +19,8 @@ def get_descriptor(descriptor_type, atoms, encoder=None):
         return get_bond_angles(atoms)
     elif descriptor_type == "soap":
         return get_soap(atoms)
+    elif descriptor_type == "acsf":
+        return get_acsf(atoms)
     elif descriptor_type == "energies":
         return get_energies(atoms)
     elif descriptor_type == "encoded_energies":
@@ -25,7 +28,7 @@ def get_descriptor(descriptor_type, atoms, encoder=None):
     else:
         raise ValueError(
             f"Unknown descriptor type: {descriptor_type}. "
-            f"Supported types: 'bond_lengths', 'bond_angles', 'soap', 'energies', 'encoded_energies'"
+            f"Supported types: 'bond_lengths', 'bond_angles', 'soap', 'acsf', 'energies', 'encoded_energies'"
         )
 
 def get_bond_lengths(atoms):
@@ -158,7 +161,7 @@ def get_soap(atoms):
         r_cut=5.0,
         n_max=8,
         l_max=6,
-        sigma=0.5,
+        sigma=0.3,
     )
 
     # Compute the SOAP descriptor for the atoms
@@ -168,3 +171,41 @@ def get_soap(atoms):
     soap_descriptor = soap_descriptor.flatten().tolist()
 
     return soap_descriptor
+
+def get_acsf(atoms):
+    """
+    Return the ACSF descriptor using the DScribe library.
+    ACSF (Atom-Centered Symmetry Functions) captures the local environment around each atom
+    by using symmetry functions.
+    The ACSF descriptors for each atom are concatenated into a single vector.
+    """
+
+    # Create an ACSF descriptor object
+    acsf = ACSF(
+    species=["H", "C"],
+    r_cut=5.0,
+    g2_params=[
+        [1.0, 0.0],
+        [1.0, 1.0],
+        [1.0, 2.0],
+        [1.0, 3.0],
+        [1.0, 4.0],
+    ],
+    g4_params=[
+        [1.0, 1.0,  1.0],
+        [1.0, 1.0, -1.0],
+        [1.0, 2.0,  1.0],
+        [1.0, 2.0, -1.0],
+        [1.0, 4.0,  1.0],
+        [1.0, 4.0, -1.0],
+    ],
+    periodic=False
+    )
+
+    # Compute the ACSF descriptor for the atoms
+    acsf_descriptor = acsf.create(atoms)
+
+    # Concatenate into a list
+    acsf_descriptor = acsf_descriptor.flatten().tolist()
+
+    return acsf_descriptor
