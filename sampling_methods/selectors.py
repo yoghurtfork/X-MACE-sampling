@@ -97,7 +97,7 @@ def k_means_clustering(descriptor_matrix, n_to_select, n_clusters="n_to_select",
 
     random_state: Random seed for reproducibility. Default: 42
     """
-
+    
     if n_clusters == "n_to_select":
         n_clusters = n_to_select
     samples_per_cluster = n_to_select // n_clusters
@@ -116,13 +116,13 @@ def k_means_clustering(descriptor_matrix, n_to_select, n_clusters="n_to_select",
     
     return np.array(selected_indices)
 
-def birch(descriptor_matrix, n_to_select, n_clusters="n_to_select", threshold=0.1, branching_factor=50):
+def birch(descriptor_matrix, n_to_select, n_clusters="n_to_select", threshold=0.001, branching_factor=50):
     """
     Use BIRCH algorithm to select n_to_select samples.
     If n_clusters is not specified, it will be set to n_to_select, ie one sample per cluster.
     If n_clusters is specified, it samples equally from clusters, taking the samples closest to cluster centers.
     
-    threshold: Radius which controls the formation of clusters. Default: 0.1
+    threshold: Radius which controls the formation of clusters. Default: 0.001
     branching_factor: Maximum number of subclusters in each node. Default: 50
     """
 
@@ -147,12 +147,12 @@ def birch(descriptor_matrix, n_to_select, n_clusters="n_to_select", threshold=0.
 
     return np.array(selected_indices)    
 
-def dbscan(descriptor_matrix, n_to_select, eps=0.5, min_samples=5):
+def dbscan(descriptor_matrix, n_to_select, eps=0.7, min_samples=5):
     '''
     Use DBSCAN to select n_to_select samples.
     It samples equally from clusters, taking the samples closest to cluster centers.
 
-    eps: DBSCAN epsilon parameter. Default: 0.5
+    eps: DBSCAN epsilon parameter. Default: 0.7
     min_samples: DBSCAN min_samples parameter. Default: 5
     '''
 
@@ -160,7 +160,7 @@ def dbscan(descriptor_matrix, n_to_select, eps=0.5, min_samples=5):
     db.fit(descriptor_matrix)
     labels = db.labels_
 
-    n_clusters = len(np.unique_counts(labels))
+    n_clusters = len(np.unique_counts(labels)[0])
     samples_per_cluster = n_to_select // n_clusters
 
     selected_indices = []
