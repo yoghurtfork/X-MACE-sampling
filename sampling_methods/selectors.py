@@ -101,18 +101,31 @@ def k_means_clustering(descriptor_matrix, n_to_select, n_clusters="n_to_select",
     if n_clusters == "n_to_select":
         n_clusters = n_to_select
     samples_per_cluster = n_to_select // n_clusters
+    remainder = n_to_select % n_clusters
 
     kmeans = KMeans(n_clusters=n_clusters, random_state=random_state)
     kmeans.fit(descriptor_matrix)
+
     cluster_centers = kmeans.cluster_centers_
+    labels = kmeans.labels_
     
     selected_indices = []
-    for center in cluster_centers:
-        distances = np.linalg.norm(descriptor_matrix - center, axis=1)
-        for _ in range(samples_per_cluster): # Add the closest sample(s) to each cluster center
-            closest_idx = np.argmin(distances) 
-            selected_indices.append(closest_idx)
-            distances[closest_idx] = np.inf  # Exclude this index from future selections
+    for label, center in enumerate(cluster_centers):
+        cluster_members_idx = np.where(labels == label)[0]
+        cluster_members = descriptor_matrix[cluster_members_idx]
+
+        distances = np.linalg.norm(cluster_members - center, axis=1)
+        
+        updated_samples_per_cluster = samples_per_cluster
+        if label < remainder:
+            updated_samples_per_cluster += 1 # Handles remainder
+
+        for _ in range(updated_samples_per_cluster): # Add the closest sample(s) to each cluster center
+            closest_local_idx = np.argmin(distances) 
+            closest_global_idx = cluster_members_idx[closest_local_idx] # Convert from local index (in cluster_members) to global index (in descriptor_matrix)
+            
+            selected_indices.append(closest_global_idx)
+            distances[closest_local_idx] = np.inf  # Exclude this index from future selections
     
     return np.array(selected_indices)
 
