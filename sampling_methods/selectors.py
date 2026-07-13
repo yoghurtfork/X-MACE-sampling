@@ -10,6 +10,7 @@ def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
         - "k_means_clustering"
         - "birch"
         - "dbscan"
+        - "dbscan_weighted"
     """
     if selector_type == "farthest_point_sampling":
         return farthest_point_sampling(descriptor_matrix, n_to_select, **kwargs)
@@ -21,10 +22,12 @@ def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
         return birch(descriptor_matrix, n_to_select, **kwargs)
     elif selector_type == "dbscan":
         return dbscan(descriptor_matrix, n_to_select, **kwargs)
+    elif selector_type == "dbscan_weighted":
+        return dbscan_weighted(descriptor_matrix, n_to_select, **kwargs)
     else:
         raise ValueError(
             f"Unknown selector type: {selector_type}. "
-            f"Supported types: 'farthest_point_sampling', 'random_sampling', 'k_means_clustering', 'birch'"
+            f"Supported types: 'farthest_point_sampling', 'random_sampling', 'k_means_clustering', 'birch', 'dbscan', 'dbscan_weighted'"
         )
 
 def random_sampling(descriptor_matrix, n_to_select):
@@ -187,15 +190,16 @@ def dbscan(descriptor_matrix, n_to_select, eps=0.7, min_samples=5):
     db.fit(descriptor_matrix)
     
     labels = db.labels_
-    labels_exclude_noise = [l for l in np.unique(labels) if l != -1]
+    unique_labels = [l for l in np.unique(labels) if l != -1]
 
-    n_clusters = len(labels_exclude_noise)
+    n_clusters = len(unique_labels)
     samples_per_cluster = n_to_select // n_clusters
     remainder = n_to_select % n_clusters
     print("n clusters:", n_clusters)
+    print("labels:", labels)
 
     selected_indices = []
-    for i, label in enumerate(labels_exclude_noise):
+    for i, label in enumerate(unique_labels):
         cluster_members_idx = np.where(labels == label)[0]
         cluster_members = descriptor_matrix[cluster_members_idx]
         
@@ -214,4 +218,63 @@ def dbscan(descriptor_matrix, n_to_select, eps=0.7, min_samples=5):
             selected_indices.append(closest_global_idx)
             distances[closest_local_idx] = np.inf # Exclude this index from future selections
 
+    if len(np.unique(selected_indices)) < len(selected_indices): print("warning: repeated indices")
+    return np.array(selected_indices) 
+
+def dbscan_weighted(descriptor_matrix, n_to_select, eps=0.7, min_samples=5):
+    '''
+    Use weighted DBSCAN to select n_to_select samples.
+    Samples are allocated to clusters in proportion to cluster size.
+    Within each cluster, the samples closest to cluster centers are taken.
+    Noise (label = -1) is ignored.
+
+    eps: DBSCAN epsilon parameter. Default: 0.7
+    min_samples: DBSCAN min_samples parameter. Default: 5
+    '''
+
+    db = DBSCAN(eps=eps, min_samples=min_samples)
+    db.fit(descriptor_matrix)
+    
+    labels = db.labels_
+    unique_labels = [l for l in np.unique(labels) if l != -1]
+
+    cluster_sizes = np.array([
+        np.sum(labels == label)
+        for label in unique_labels
+    ])
+
+    # Ideal (fractional) allocation
+    ideal = cluster_sizes / cluster_sizes.sum() * n_to_select
+
+    # Integer allocation
+    allocation = np.floor(ideal).astype(int)
+
+    # Distribute remaining samples to the clusters with the largest fractional remainders
+    remainder = n_to_select - allocation.sum()
+    fractional = ideal - allocation
+    order = np.argsort(fractional)[::-1]
+
+    for i in order[:remainder]:
+        allocation[i] += 1
+
+    print("labels:", labels)
+    print("allocation:", allocation)
+
+    selected_indices = []
+    for label, n_allocated in zip(unique_labels, allocation):
+        cluster_members_idx = np.where(labels == label)[0]
+        cluster_members = descriptor_matrix[cluster_members_idx]
+        
+        center = cluster_members.mean(axis=0) # Find cluster center
+
+        distances = np.linalg.norm(cluster_members - center, axis=1)
+        
+        for _ in range(n_allocated): # Add the closest sample(s) to each cluster center
+            closest_local_idx = np.argmin(distances)
+            closest_global_idx = cluster_members_idx[closest_local_idx]
+
+            selected_indices.append(closest_global_idx)
+            distances[closest_local_idx] = np.inf # Exclude this index from future selections
+
+    if len(np.unique(selected_indices)) < len(selected_indices): print("warning: repeated indices")
     return np.array(selected_indices) 
