@@ -257,6 +257,8 @@ def dbscan_weighted(descriptor_matrix, n_to_select, eps=0.7, min_samples=5):
     for i in order[:remainder]:
         allocation[i] += 1
 
+    print("n clusters:", len(unique_labels))
+    print("n clusters with samples:", len([i for i in allocation if i != 0]))
     print("labels:", labels)
     print("allocation:", allocation)
 
