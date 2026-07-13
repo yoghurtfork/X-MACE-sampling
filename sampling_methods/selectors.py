@@ -129,21 +129,31 @@ def birch(descriptor_matrix, n_to_select, n_clusters="n_to_select", threshold=0.
     if n_clusters == "n_to_select":
         n_clusters = n_to_select
     samples_per_cluster = n_to_select // n_clusters
+    remainder = n_to_select % n_clusters
 
     birch = Birch(n_clusters=n_clusters, threshold=threshold, branching_factor=branching_factor)
     birch.fit(descriptor_matrix)
     labels = birch.labels_
 
     selected_indices = []
-    for label in np.unique(labels):
-        members = np.where(labels == label)[0]
-        center = descriptor_matrix[members].mean(axis=0) # Find cluster center
+    for i, label in enumerate(np.unique(labels)):
+        cluster_members_idx = np.where(labels == label)[0]
+        cluster_members = descriptor_matrix[cluster_members_idx]
+        
+        center = cluster_members.mean(axis=0) # Find cluster center
 
-        distances = np.linalg.norm(descriptor_matrix - center, axis=1)
-        for _ in range(samples_per_cluster): # Add the closest sample(s) to each cluster center
-            closest_idx = np.argmin(distances) 
-            selected_indices.append(closest_idx)
-            distances[closest_idx] = np.inf  # Exclude this index from future selections
+        distances = np.linalg.norm(cluster_members - center, axis=1)
+        
+        updated_samples_per_cluster = samples_per_cluster
+        if i < remainder:
+            updated_samples_per_cluster += 1 # Handles remainder
+
+        for _ in range(updated_samples_per_cluster): # Add the closest sample(s) to each cluster center
+            closest_local_idx = np.argmin(distances) 
+            closest_global_idx = cluster_members_idx[closest_local_idx] # Convert from local index (in cluster_members) to global index (in descriptor_matrix)
+            
+            selected_indices.append(closest_global_idx)
+            distances[closest_local_idx] = np.inf  # Exclude this index from future selections
 
     return np.array(selected_indices)    
 
@@ -159,14 +169,18 @@ def dbscan(descriptor_matrix, n_to_select, eps=0.7, min_samples=5):
     db = DBSCAN(eps=eps, min_samples=min_samples)
     db.fit(descriptor_matrix)
     labels = db.labels_
+    print("labels:", labels)
 
     n_clusters = len(np.unique_counts(labels)[0])
     samples_per_cluster = n_to_select // n_clusters
+    print("n clusters:", n_clusters)
 
     selected_indices = []
     for label in np.unique(labels):
         members = np.where(labels == label)[0]
         center = descriptor_matrix[members].mean(axis=0) # Find cluster center
+        print("members:", members)
+        print("desc matrix members:", descriptor_matrix[members])
 
         distances = np.linalg.norm(descriptor_matrix - center, axis=1)
         for _ in range(samples_per_cluster): # Add the closest sample(s) to each cluster center
