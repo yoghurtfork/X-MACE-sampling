@@ -131,6 +131,7 @@ def k_means_clustering(descriptor_matrix, n_to_select, n_clusters="n_to_select",
             selected_indices.append(closest_global_idx)
             distances[closest_local_idx] = np.inf  # Exclude this index from future selections
     
+    if len(np.unique(selected_indices)) < len(selected_indices): print("warning: repeated indices")
     return np.array(selected_indices)
 
 def birch(descriptor_matrix, n_to_select, n_clusters="n_to_select", threshold=0.001, branching_factor=50):
@@ -174,6 +175,7 @@ def birch(descriptor_matrix, n_to_select, n_clusters="n_to_select", threshold=0.
             selected_indices.append(closest_global_idx)
             distances[closest_local_idx] = np.inf  # Exclude this index from future selections
 
+    if len(np.unique(selected_indices)) < len(selected_indices): print("warning: repeated indices")
     return np.array(selected_indices)    
 
 def dbscan(descriptor_matrix, n_to_select, eps=0.7, min_samples=5):
