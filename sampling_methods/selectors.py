@@ -282,3 +282,68 @@ def dbscan_weighted(descriptor_matrix, n_to_select, eps=0.7, min_samples=5):
 
     if len(np.unique(selected_indices)) < len(selected_indices): print("warning: repeated indices")
     return np.array(selected_indices) 
+
+def uniform_grid_sampling(
+    bond_lengths,
+    dihedrals,
+    n_to_select,
+):
+    '''
+    Uniformly sample n_to_select points over the 2D space of bond lengths and dihedrals.
+    The grid has the same number of intervals along both axes.
+    '''
+
+    bond_lengths = np.asarray(bond_lengths)
+    dihedrals = np.asarray(dihedrals)
+
+    # Number of grid cells along each axis
+    n_bins = int(round(np.sqrt(n_to_select)))
+
+    r_edges = np.linspace(np.min(bond_lengths), np.max(bond_lengths), n_bins + 1)
+    phi_edges = np.linspace(np.min(dihedrals), np.max(dihedrals), n_bins + 1)
+
+    selected_indices = []
+
+    for i in range(n_bins):
+        for j in range(n_bins):
+
+            # Include right edge on the last bin
+            if i == n_bins - 1:
+                r_mask = (
+                    (bond_lengths >= r_edges[i]) &
+                    (bond_lengths <= r_edges[i + 1])
+                )
+            else:
+                r_mask = (
+                    (bond_lengths >= r_edges[i]) &
+                    (bond_lengths < r_edges[i + 1])
+                )
+
+            if j == n_bins - 1:
+                phi_mask = (
+                    (dihedrals >= phi_edges[j]) &
+                    (dihedrals <= phi_edges[j + 1])
+                )
+            else:
+                phi_mask = (
+                    (dihedrals >= phi_edges[j]) &
+                    (dihedrals < phi_edges[j + 1])
+                )
+
+            candidates = np.where(r_mask & phi_mask)[0]
+
+            if len(candidates) == 0:
+                continue
+
+            # Grid cell centre
+            r_center = 0.5 * (r_edges[i] + r_edges[i + 1])
+            phi_center = 0.5 * (phi_edges[j] + phi_edges[j + 1])
+
+            d = np.sqrt(
+                ((bond_lengths[candidates] - r_center) / 1.0) ** 2 +
+                ((dihedrals[candidates] - phi_center) / 180.0) ** 2
+            )
+
+            selected_indices.append(candidates[np.argmin(d)])
+
+    return np.array(selected_indices)
