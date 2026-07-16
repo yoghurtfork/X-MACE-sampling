@@ -11,6 +11,7 @@ def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
         - "birch"
         - "dbscan"
         - "dbscan_weighted"
+        - "uniform_grid"
     """
     if selector_type == "farthest_point_sampling":
         return farthest_point_sampling(descriptor_matrix, n_to_select, **kwargs)
@@ -24,10 +25,12 @@ def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
         return dbscan(descriptor_matrix, n_to_select, **kwargs)
     elif selector_type == "dbscan_weighted":
         return dbscan_weighted(descriptor_matrix, n_to_select, **kwargs)
+    elif selector_type == "uniform_grid":
+        return dbscan_weighted(descriptor_matrix, n_to_select, **kwargs)
     else:
         raise ValueError(
             f"Unknown selector type: {selector_type}. "
-            f"Supported types: 'farthest_point_sampling', 'random_sampling', 'k_means_clustering', 'birch', 'dbscan', 'dbscan_weighted'"
+            f"Supported types: 'farthest_point_sampling', 'random_sampling', 'k_means_clustering', 'birch', 'dbscan', 'dbscan_weighted', 'uniform_grid'"
         )
 
 def random_sampling(descriptor_matrix, n_to_select):
@@ -283,24 +286,26 @@ def dbscan_weighted(descriptor_matrix, n_to_select, eps=0.7, min_samples=5):
     if len(np.unique(selected_indices)) < len(selected_indices): print("warning: repeated indices")
     return np.array(selected_indices) 
 
-def uniform_grid_sampling(
-    bond_lengths,
-    dihedrals,
-    n_to_select,
-):
+def uniform_grid_sampling(desc_matrix, n_to_select, stagger=False):
     '''
-    Uniformly sample n_to_select points over the 2D space of bond lengths and dihedrals.
-    The grid has the same number of intervals along both axes.
+    Uniformly samples n_to_select points over the 2D space of x (eg bond lengths) and y (eg dihedrals).
+    
+    Splits the sample space into a grid with the same number of intervals along each axes.
+    Takes the samples closest to the center of each grid cell.
+
+    stagger: every even row is offset to the left by 1/4 cell and
+    every odd row is offset to the right by 1/4 cell. Default: False
     '''
 
-    bond_lengths = np.asarray(bond_lengths)
-    dihedrals = np.asarray(dihedrals)
+    x = np.asarray([row[0] for row in desc_matrix])
+    y = np.asarray([row[1] for row in desc_matrix])
 
     # Number of grid cells along each axis
     n_bins = int(round(np.sqrt(n_to_select)))
 
-    r_edges = np.linspace(np.min(bond_lengths), np.max(bond_lengths), n_bins + 1)
-    phi_edges = np.linspace(np.min(dihedrals), np.max(dihedrals), n_bins + 1)
+    x_edges = np.linspace(np.min(x), np.max(x), n_bins + 1)
+    y_edges = np.linspace(np.min(y), np.max(y), n_bins + 1)
+    x_width = (np.max(x) - np.min(x)) / n_bins
 
     selected_indices = []
 
@@ -309,39 +314,46 @@ def uniform_grid_sampling(
 
             # Include right edge on the last bin
             if i == n_bins - 1:
-                r_mask = (
-                    (bond_lengths >= r_edges[i]) &
-                    (bond_lengths <= r_edges[i + 1])
+                x_mask = (
+                    (x >= x_edges[i]) &
+                    (x <= x_edges[i + 1])
                 )
             else:
-                r_mask = (
-                    (bond_lengths >= r_edges[i]) &
-                    (bond_lengths < r_edges[i + 1])
+                x_mask = (
+                    (x >= x_edges[i]) &
+                    (x < x_edges[i + 1])
                 )
 
             if j == n_bins - 1:
-                phi_mask = (
-                    (dihedrals >= phi_edges[j]) &
-                    (dihedrals <= phi_edges[j + 1])
+                y_mask = (
+                    (y >= y_edges[j]) &
+                    (y <= y_edges[j + 1])
                 )
             else:
-                phi_mask = (
-                    (dihedrals >= phi_edges[j]) &
-                    (dihedrals < phi_edges[j + 1])
+                y_mask = (
+                    (y >= y_edges[j]) &
+                    (y < y_edges[j + 1])
                 )
 
-            candidates = np.where(r_mask & phi_mask)[0]
+            candidates = np.where(x_mask & y_mask)[0] # returns points that lie within the grid cell
 
-            if len(candidates) == 0:
+            if len(candidates) == 0: # if no points lie within the grid cell, continue
                 continue
 
-            # Grid cell centre
-            r_center = 0.5 * (r_edges[i] + r_edges[i + 1])
-            phi_center = 0.5 * (phi_edges[j] + phi_edges[j + 1])
+            # Grid cell centre. If stagger, displace x_center
+            x_center = 0.5 * (x_edges[i] + x_edges[i + 1])
+            if stagger:
+                if j % 2 == 0:
+                    x_center -= 0.25*x_width
+                else:
+                    x_center += 0.25*x_width
+            
+            y_center = 0.5 * (y_edges[j] + y_edges[j + 1])
 
+            # distance of points from grid cell centre
             d = np.sqrt(
-                ((bond_lengths[candidates] - r_center) / 1.0) ** 2 +
-                ((dihedrals[candidates] - phi_center) / 180.0) ** 2
+                ((x[candidates] - x_center) / 1.0) ** 2 +
+                ((y[candidates] - y_center) / 180.0) ** 2
             )
 
             selected_indices.append(candidates[np.argmin(d)])
