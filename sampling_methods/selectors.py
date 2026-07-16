@@ -26,7 +26,7 @@ def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
     elif selector_type == "dbscan_weighted":
         return dbscan_weighted(descriptor_matrix, n_to_select, **kwargs)
     elif selector_type == "uniform_grid":
-        return dbscan_weighted(descriptor_matrix, n_to_select, **kwargs)
+        return uniform_grid_sampling(descriptor_matrix, n_to_select, **kwargs)
     else:
         raise ValueError(
             f"Unknown selector type: {selector_type}. "
@@ -286,7 +286,7 @@ def dbscan_weighted(descriptor_matrix, n_to_select, eps=0.7, min_samples=5):
     if len(np.unique(selected_indices)) < len(selected_indices): print("warning: repeated indices")
     return np.array(selected_indices) 
 
-def uniform_grid_sampling(desc_matrix, n_to_select, stagger=False):
+def uniform_grid_sampling(descriptor_matrix, n_to_select, stagger=False):
     '''
     Uniformly samples n_to_select points over the 2D space of x (eg bond lengths) and y (eg dihedrals).
     
@@ -297,8 +297,8 @@ def uniform_grid_sampling(desc_matrix, n_to_select, stagger=False):
     every odd row is offset to the right by 1/4 cell. Default: False
     '''
 
-    x = np.asarray([row[0] for row in desc_matrix])
-    y = np.asarray([row[1] for row in desc_matrix])
+    x = np.asarray([row[0] for row in descriptor_matrix])
+    y = np.asarray([row[1] for row in descriptor_matrix])
 
     # Number of grid cells along each axis
     n_bins = int(round(np.sqrt(n_to_select)))
