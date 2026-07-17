@@ -1,2 +1,2 @@
 descriptor,selector,descriptor_kwargs,selector_kwargs
-energies,k_means_clustering,"{}","{'n_clusters': 5, 'random_state': 42}"
+encoded_energies,farthest_point_sampling,"{'encoder': 'base_encoder'}","{}"

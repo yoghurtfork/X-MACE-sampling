@@ -1,2 +1,22 @@
 descriptor,selector,descriptor_kwargs,selector_kwargs,best_epoch,energy_mae
-energies,k_means_clustering,{},"{'n_clusters': 5, 'random_state': 42}",10,0.7428485155105591
+encoded_energies,farthest_point_sampling,"{'encoder': PermutationInvariantEncoder(
+  (elementwise_nn): Sequential(
+    (0): Linear(in_features=1, out_features=16, bias=True)
+    (1): ELU(alpha=1.0)
+    (2): Linear(in_features=16, out_features=16, bias=True)
+    (3): ELU(alpha=1.0)
+    (4): Linear(in_features=16, out_features=16, bias=True)
+    (5): ELU(alpha=1.0)
+    (6): Linear(in_features=16, out_features=16, bias=True)
+    (7): ELU(alpha=1.0)
+  )
+  (post_aggregation_nn): Sequential(
+    (0): Linear(in_features=16, out_features=16, bias=True)
+    (1): ELU(alpha=1.0)
+    (2): Linear(in_features=16, out_features=16, bias=True)
+    (3): ELU(alpha=1.0)
+    (4): Linear(in_features=16, out_features=16, bias=True)
+    (5): ELU(alpha=1.0)
+    (6): Linear(in_features=16, out_features=16, bias=True)
+  )
+)}",{},10,0.7018992900848389
