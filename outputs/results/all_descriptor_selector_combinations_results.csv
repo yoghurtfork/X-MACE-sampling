@@ -1,0 +1,21 @@
+descriptor,selector,descriptor_kwargs,selector_kwargs,best_epoch,energy_mae
+energies,farthest_point_sampling,{},{},10,0.6950268149375916
+energies,k_means_clustering,{},{'n_clusters': 5},8,0.7173333168029785
+energies,birch,{},{'n_clusters': 5},7,0.7045615911483765
+energies,dbscan_weighted,{},{},8,0.7366254329681396
+encoded_energies,farthest_point_sampling,{'encoder': 'base_encoder'},{},9,0.7107813954353333
+encoded_energies,k_means_clustering,{'encoder': 'base_encoder'},{'n_clusters': 5},8,0.715204119682312
+encoded_energies,birch,{'encoder': 'base_encoder'},{'n_clusters': 5},10,0.7599748969078064
+encoded_energies,dbscan_weighted,{'encoder': 'base_encoder'},{},4,0.7318289875984192
+soap,farthest_point_sampling,{},{},9,0.7317110300064087
+soap,k_means_clustering,{},{'n_clusters': 5},8,0.7057075500488281
+soap,birch,{},{'n_clusters': 5},9,0.7421792149543762
+soap,dbscan_weighted,{},{},1,0.9799821376800537
+acsf,farthest_point_sampling,{},{},10,0.7032661437988281
+acsf,k_means_clustering,{},{'n_clusters': 5},7,0.699256956577301
+acsf,birch,{},{'n_clusters': 5},9,0.7088332176208496
+acsf,dbscan_weighted,{},{},1,1.1379626989364624
+mbtr,farthest_point_sampling,{},{},9,0.719014048576355
+mbtr,k_means_clustering,{},{'n_clusters': 5},10,0.7123491764068604
+mbtr,birch,{},{'n_clusters': 5},10,0.695917010307312
+mbtr,dbscan_weighted,{},{},5,0.7887851595878601

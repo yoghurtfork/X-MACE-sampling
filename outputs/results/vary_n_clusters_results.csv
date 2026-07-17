@@ -1,0 +1,24 @@
+descriptor,selector,best_epoch,energy_mae,descriptor_kwargs,selector_kwargs
+base,base,9,1.396447777748108,,
+full,full,9,0.7122296094894409,,
+mbtr,birch,5,0.7887851595878601,{},{'n_clusters': 1}
+mbtr,birch,10,0.695917010307312,{},{'n_clusters': 5}
+mbtr,birch,4,0.7213309407234192,{},{'n_clusters': 10}
+mbtr,birch,8,0.7270076274871826,{},{'n_clusters': 15}
+mbtr,birch,8,0.7378394603729248,{},{'n_clusters': 20}
+mbtr,birch,10,0.7341076135635376,{},{'n_clusters': 25}
+mbtr,birch,10,0.7118692398071289,{},{'n_clusters': 30}
+mbtr,birch,9,0.7428534626960754,{},{'n_clusters': 35}
+mbtr,birch,10,0.7281652092933655,{},{'n_clusters': 40}
+mbtr,birch,8,0.7080908417701721,{},{'n_clusters': 45}
+mbtr,birch,8,0.7295984625816345,{},{'n_clusters': 50}
+mbtr,birch,10,0.726954460144043,{},{'n_clusters': 55}
+mbtr,birch,8,0.7062489986419678,{},{'n_clusters': 60}
+mbtr,birch,6,0.7121831178665161,{},{'n_clusters': 65}
+mbtr,birch,9,0.7240164875984192,{},{'n_clusters': 70}
+mbtr,birch,9,0.6949537396430969,{},{'n_clusters': 75}
+mbtr,birch,8,0.7307477593421936,{},{'n_clusters': 80}
+mbtr,birch,10,0.7268714308738708,{},{'n_clusters': 85}
+mbtr,birch,10,0.7240297198295593,{},{'n_clusters': 90}
+mbtr,birch,10,0.7337040305137634,{},{'n_clusters': 95}
+mbtr,birch,10,0.707501232624054,{},{'n_clusters': 100}
