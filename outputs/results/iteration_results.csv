@@ -1,3 +1,2 @@
-descriptor,selector,best_epoch,energy_mae
-base,base,10,1.416432499885559
-full,full,10,0.7198627591133118
+descriptor,selector,descriptor_kwargs,selector_kwargs,best_epoch,energy_mae
+energies,k_means_clustering,{},"{'n_clusters': 5, 'random_state': 42}",10,0.7428485155105591

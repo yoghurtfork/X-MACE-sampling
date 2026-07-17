@@ -1,5 +1,2 @@
-descriptor,selector
-energies,farthest_point_sampling
-soap,farthest_point_sampling
-acsf,farthest_point_sampling
-mbtr,farthest_point_sampling
+descriptor,selector,descriptor_kwargs,selector_kwargs
+energies,k_means_clustering,"{}","{'n_clusters': 5, 'random_state': 42}"
