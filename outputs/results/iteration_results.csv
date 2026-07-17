@@ -1,0 +1,3 @@
+descriptor,selector,best_epoch,energy_mae
+base,base,10,1.416432499885559
+full,full,10,0.7198627591133118

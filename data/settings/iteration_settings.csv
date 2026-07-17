@@ -1,0 +1,5 @@
+descriptor,selector
+energies,farthest_point_sampling
+soap,farthest_point_sampling
+acsf,farthest_point_sampling
+mbtr,farthest_point_sampling
