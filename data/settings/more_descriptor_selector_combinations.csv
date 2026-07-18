@@ -1,0 +1,3 @@
+descriptor,selector,descriptor_kwargs,selector_kwargs
+latent_space,k_means_clustering_weighted,"{}","{'n_clusters': 5}"
+latent_space,birch_weighted,"{}","{'n_clusters': 5}"

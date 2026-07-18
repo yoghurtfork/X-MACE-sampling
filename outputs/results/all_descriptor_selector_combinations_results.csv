@@ -21,3 +21,14 @@ mbtr,farthest_point_sampling,50,0.6943541765213013,{},{}
 mbtr,k_means_clustering,5,0.7951161861419678,{},{'n_clusters': 5}
 mbtr,birch,42,0.6943575739860535,{},{'n_clusters': 5}
 mbtr,dbscan_weighted,16,0.6805089712142944,{},{}
+energies,k_means_clustering_weighted,33,0.6755179762840271,{},{'n_clusters': 5}
+energies,birch_weighted,27,0.6846291422843933,{},{'n_clusters': 5}
+encoded_energies,k_means_clustering_weighted,47,0.6740129590034485,{'encoder': 'base_encoder'},{'n_clusters': 5}
+encoded_energies,birch_weighted,50,0.6614711880683899,{'encoder': 'base_encoder'},{'n_clusters': 5}
+soap,k_means_clustering_weighted,19,0.6945196390151978,{},{'n_clusters': 5}
+soap,birch_weighted,5,0.7483956217765808,{},{'n_clusters': 5}
+acsf,k_means_clustering_weighted,42,0.6646574139595032,{},{'n_clusters': 5}
+acsf,birch_weighted,50,0.6874530911445618,{},{'n_clusters': 5}
+mbtr,k_means_clustering_weighted,5,0.8245897889137268,{},{'n_clusters': 5}
+mbtr,birch_weighted,5,0.712749719619751,{},{'n_clusters': 5}
+
