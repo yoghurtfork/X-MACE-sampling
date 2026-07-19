@@ -1,5 +1,9 @@
-descriptor,selector,descriptor_kwargs,selector_kwargs,best_epoch,energy_mae
-latent_space,farthest_point_sampling,{},{},50,0.6682494282722473
-latent_space,k_means_clustering,{},{'n_clusters': 5},19,0.6730855703353882
-latent_space,birch,{},{'n_clusters': 5},14,0.6809564232826233
-latent_space,dbscan_weighted,{},{},10,0.9209825396537781
+descriptor,selector,best_epoch,energy_mae,descriptor_kwargs,selector_kwargs
+base,base,9,1.396447777748108,,
+full,full,9,0.7122296094894409,,
+latent_space,farthest_point_sampling,10,0.718447744846344,{},{}
+latent_space,dbscan_weighted,10,0.7161325216293335,{},{}
+latent_space,k_means_clustering,9,0.731875479221344,{},{'n_clusters': 5}
+latent_space,birch,10,0.7731618285179138,{},{'n_clusters': 5}
+latent_space,k_means_clustering_weighted,10,0.7258267402648926,{},{'n_clusters': 5}
+latent_space,birch_weighted,9,0.8027808666229248,{},{'n_clusters': 5}
