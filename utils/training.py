@@ -8,6 +8,7 @@ import torch
 from e3nn import o3
 from mace import data, modules, tools
 from mace.tools import torch_geometric
+from copy import deepcopy
 
 
 @dataclass
@@ -156,6 +157,8 @@ def train_model(
 
     if model is None:
         model = modules.AutoencoderExcitedMACE(**default_model_kwargs).to(device)
+    else:
+        model = deepcopy(model)
 
     default_loss_kwargs = {
         "energy_weight": 1.0,

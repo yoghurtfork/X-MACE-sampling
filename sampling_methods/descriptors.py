@@ -68,6 +68,7 @@ def get_descriptor(descriptor_type, atoms, encoder=None):
     Router to the appropriate descriptor function. 
         - "bond_lengths": C-C bond lengths
         - "bond_angles": C-C-C bond angles
+        - "dihedral": dihedral angle about the C=C bond
         - "energies": energies of the ASE Atoms object
         - "encoded_energies": energies encoded into a latent space representation using the XMACE encoder
         - "soap": SOAP descriptor using the DScribe library
@@ -78,6 +79,8 @@ def get_descriptor(descriptor_type, atoms, encoder=None):
         return get_bond_lengths(atoms)
     elif descriptor_type == "bond_angles":
         return get_bond_angles(atoms)
+    elif descriptor_type == "dihedral":
+        return get_dihedral(atoms)
     elif descriptor_type == "soap":
         return get_soap(atoms)
     elif descriptor_type == "acsf":
@@ -319,3 +322,7 @@ def get_mbtr(atoms):
     mbtr_descriptor = np.concatenate([mbtr_descriptor_k2, mbtr_descriptor_k3])
 
     return mbtr_descriptor
+
+def get_dihedral(atoms):
+    angle = atoms.get_dihedral(4, 0, 1, 3)
+    return [angle]

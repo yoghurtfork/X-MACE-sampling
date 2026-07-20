@@ -1,0 +1,34 @@
+descriptor,selector,best_epoch,energy_mae,descriptor_kwargs,selector_kwargs
+base,base,49,1.3522326946258545,,
+full,full,50,0.7162483930587769,,
+energies,farthest_point_sampling,45,0.6806825399398804,{},{}
+energies,k_means_clustering,44,0.6682518720626831,{},{'n_clusters': 5}
+energies,birch,39,0.68196702003479,{},{'n_clusters': 5}
+energies,dbscan_weighted,14,0.7499179244041443,{},{}
+encoded_energies,farthest_point_sampling,43,0.6819086670875549,{'encoder': 'base_encoder'},{}
+encoded_energies,k_means_clustering,50,0.6667113304138184,{'encoder': 'base_encoder'},{'n_clusters': 5}
+encoded_energies,birch,49,0.6909729838371277,{'encoder': 'base_encoder'},{'n_clusters': 5}
+encoded_energies,dbscan_weighted,5,0.7672621011734009,{'encoder': 'base_encoder'},{}
+soap,farthest_point_sampling,50,0.6905617713928223,{},{}
+soap,k_means_clustering,10,0.6737000942230225,{},{'n_clusters': 5}
+soap,birch,6,0.7679464817047119,{},{'n_clusters': 5}
+soap,dbscan_weighted,48,0.888549268245697,{},{}
+acsf,farthest_point_sampling,43,0.7086651921272278,{},{}
+acsf,k_means_clustering,37,0.6675886511802673,{},{'n_clusters': 5}
+acsf,birch,27,0.686920166015625,{},{'n_clusters': 5}
+acsf,dbscan_weighted,1,1.277897834777832,{},{}
+mbtr,farthest_point_sampling,50,0.6943541765213013,{},{}
+mbtr,k_means_clustering,5,0.7951161861419678,{},{'n_clusters': 5}
+mbtr,birch,42,0.6943575739860535,{},{'n_clusters': 5}
+mbtr,dbscan_weighted,16,0.6805089712142944,{},{}
+energies,k_means_clustering_weighted,33,0.6755179762840271,{},{'n_clusters': 5}
+energies,birch_weighted,27,0.6846291422843933,{},{'n_clusters': 5}
+encoded_energies,k_means_clustering_weighted,47,0.6740129590034485,{'encoder': 'base_encoder'},{'n_clusters': 5}
+encoded_energies,birch_weighted,50,0.6614711880683899,{'encoder': 'base_encoder'},{'n_clusters': 5}
+soap,k_means_clustering_weighted,19,0.6945196390151978,{},{'n_clusters': 5}
+soap,birch_weighted,5,0.7483956217765808,{},{'n_clusters': 5}
+acsf,k_means_clustering_weighted,42,0.6646574139595032,{},{'n_clusters': 5}
+acsf,birch_weighted,50,0.6874530911445618,{},{'n_clusters': 5}
+mbtr,k_means_clustering_weighted,5,0.8245897889137268,{},{'n_clusters': 5}
+mbtr,birch_weighted,5,0.712749719619751,{},{'n_clusters': 5}
+

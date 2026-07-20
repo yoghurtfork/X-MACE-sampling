@@ -1,0 +1,7 @@
+descriptor,selector,descriptor_kwargs,selector_kwargs
+latent_space,farthest_point_sampling,"{}","{}"
+latent_space,dbscan_weighted,"{}","{}"
+latent_space,k_means_clustering,"{}","{'n_clusters': 5}"
+latent_space,birch,"{}","{'n_clusters': 5}"
+latent_space,k_means_clustering_weighted,"{}","{'n_clusters': 5}"
+latent_space,birch_weighted,"{}","{'n_clusters': 5}"

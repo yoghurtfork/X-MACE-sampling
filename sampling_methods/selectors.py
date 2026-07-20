@@ -8,9 +8,12 @@ def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
         - "random_sampling"
         - "farthest_point_sampling"
         - "k_means_clustering"
+        - "k_means_clustering_weighted"
         - "birch"
+        - "birch_weighted"
         - "dbscan"
         - "dbscan_weighted"
+        - "uniform_grid"
     """
     if selector_type == "farthest_point_sampling":
         return farthest_point_sampling(descriptor_matrix, n_to_select, **kwargs)
@@ -18,16 +21,22 @@ def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
         return random_sampling(descriptor_matrix, n_to_select)
     elif selector_type == "k_means_clustering":
         return k_means_clustering(descriptor_matrix, n_to_select, **kwargs)
+    elif selector_type == "k_means_clustering_weighted":
+        return k_means_clustering_weighted(descriptor_matrix, n_to_select, **kwargs)
     elif selector_type == "birch":
         return birch(descriptor_matrix, n_to_select, **kwargs)
+    elif selector_type == "birch_weighted":
+        return birch_weighted(descriptor_matrix, n_to_select, **kwargs)
     elif selector_type == "dbscan":
         return dbscan(descriptor_matrix, n_to_select, **kwargs)
     elif selector_type == "dbscan_weighted":
         return dbscan_weighted(descriptor_matrix, n_to_select, **kwargs)
+    elif selector_type == "uniform_grid":
+        return uniform_grid_sampling(descriptor_matrix, n_to_select, **kwargs)
     else:
         raise ValueError(
             f"Unknown selector type: {selector_type}. "
-            f"Supported types: 'farthest_point_sampling', 'random_sampling', 'k_means_clustering', 'birch', 'dbscan', 'dbscan_weighted'"
+            f"Supported types: 'farthest_point_sampling', 'random_sampling', 'k_means_clustering', 'k_means_clustering_weighted', 'birch', 'birch_weighted', 'dbscan', 'dbscan_weighted', 'uniform_grid'"
         )
 
 def random_sampling(descriptor_matrix, n_to_select):
@@ -131,7 +140,62 @@ def k_means_clustering(descriptor_matrix, n_to_select, n_clusters="n_to_select",
             selected_indices.append(closest_global_idx)
             distances[closest_local_idx] = np.inf  # Exclude this index from future selections
     
+    if len(np.unique(selected_indices)) < len(selected_indices): print("warning: repeated indices")
     return np.array(selected_indices)
+
+def k_means_clustering_weighted(descriptor_matrix, n_to_select, n_clusters="n_to_select", random_state=42):
+    """
+    Use k-means clustering to select n_to_select samples.
+    Samples are allocated to clusters in proportion to cluster size.
+    Within each cluster, the samples closest to cluster centers are taken.
+    """
+    if n_clusters == "n_to_select":
+        n_clusters = n_to_select
+
+    kmeans = KMeans(n_clusters=n_clusters, random_state=random_state)
+    kmeans.fit(descriptor_matrix)
+
+    labels = kmeans.labels_
+    cluster_centers = kmeans.cluster_centers_
+    cluster_sizes = np.bincount(labels, minlength=n_clusters)
+
+    ideal = cluster_sizes / cluster_sizes.sum() * n_to_select
+    allocation = np.floor(ideal).astype(int)
+
+    remainder = n_to_select - allocation.sum()
+    fractional = ideal - allocation
+    order = np.argsort(fractional)[::-1]
+
+    for i in order[:remainder]:
+        allocation[i] += 1
+
+    print("n clusters:", n_clusters)
+    print("n clusters with samples:", len([i for i in allocation if i != 0]))
+    print("labels:", labels)
+    print("allocation:", allocation)
+
+    selected_indices = []
+    for label, n_allocated in enumerate(allocation):
+        if n_allocated == 0:
+            continue
+
+        cluster_members_idx = np.where(labels == label)[0]
+        cluster_members = descriptor_matrix[cluster_members_idx]
+
+        center = cluster_centers[label]
+        distances = np.linalg.norm(cluster_members - center, axis=1)
+
+        for _ in range(n_allocated):
+            closest_local_idx = np.argmin(distances)
+            closest_global_idx = cluster_members_idx[closest_local_idx]
+
+            selected_indices.append(closest_global_idx)
+            distances[closest_local_idx] = np.inf
+
+    if len(np.unique(selected_indices)) < len(selected_indices):
+        print("warning: repeated indices")
+    return np.array(selected_indices)
+
 
 def birch(descriptor_matrix, n_to_select, n_clusters="n_to_select", threshold=0.001, branching_factor=50):
     """
@@ -174,7 +238,65 @@ def birch(descriptor_matrix, n_to_select, n_clusters="n_to_select", threshold=0.
             selected_indices.append(closest_global_idx)
             distances[closest_local_idx] = np.inf  # Exclude this index from future selections
 
+    if len(np.unique(selected_indices)) < len(selected_indices): print("warning: repeated indices")
     return np.array(selected_indices)    
+
+def birch_weighted(descriptor_matrix, n_to_select, n_clusters="n_to_select", threshold=0.001, branching_factor=50):
+    """
+    Use BIRCH to select n_to_select samples.
+    Samples are allocated to clusters in proportion to cluster size.
+    Within each cluster, the samples closest to cluster centers are taken.
+    """
+    if n_clusters == "n_to_select":
+        n_clusters = n_to_select
+
+    birch = Birch(n_clusters=n_clusters, threshold=threshold, branching_factor=branching_factor)
+    birch.fit(descriptor_matrix)
+
+    labels = birch.labels_
+    unique_labels = np.unique(labels)
+
+    cluster_sizes = np.array([
+        np.sum(labels == label)
+        for label in unique_labels
+    ])
+
+    ideal = cluster_sizes / cluster_sizes.sum() * n_to_select
+    allocation = np.floor(ideal).astype(int)
+
+    remainder = n_to_select - allocation.sum()
+    fractional = ideal - allocation
+    order = np.argsort(fractional)[::-1]
+
+    for i in order[:remainder]:
+        allocation[i] += 1
+
+    print("n clusters:", len(unique_labels))
+    print("n clusters with samples:", len([i for i in allocation if i != 0]))
+    print("labels:", labels)
+    print("allocation:", allocation)
+
+    selected_indices = []
+    for label, n_allocated in zip(unique_labels, allocation):
+        if n_allocated == 0:
+            continue
+
+        cluster_members_idx = np.where(labels == label)[0]
+        cluster_members = descriptor_matrix[cluster_members_idx]
+
+        center = cluster_members.mean(axis=0)
+        distances = np.linalg.norm(cluster_members - center, axis=1)
+
+        for _ in range(n_allocated):
+            closest_local_idx = np.argmin(distances)
+            closest_global_idx = cluster_members_idx[closest_local_idx]
+
+            selected_indices.append(closest_global_idx)
+            distances[closest_local_idx] = np.inf
+
+    if len(np.unique(selected_indices)) < len(selected_indices):
+        print("warning: repeated indices")
+    return np.array(selected_indices)
 
 def dbscan(descriptor_matrix, n_to_select, eps=0.7, min_samples=5):
     '''
@@ -280,3 +402,77 @@ def dbscan_weighted(descriptor_matrix, n_to_select, eps=0.7, min_samples=5):
 
     if len(np.unique(selected_indices)) < len(selected_indices): print("warning: repeated indices")
     return np.array(selected_indices) 
+
+def uniform_grid_sampling(descriptor_matrix, n_to_select, stagger=False):
+    '''
+    Uniformly samples n_to_select points over the 2D space of x (eg bond lengths) and y (eg dihedrals).
+    
+    Splits the sample space into a grid with the same number of intervals along each axes.
+    Takes the samples closest to the center of each grid cell.
+
+    stagger: every even row is offset to the left by 1/4 cell and
+    every odd row is offset to the right by 1/4 cell. Default: False
+    '''
+
+    x = np.asarray([row[0] for row in descriptor_matrix])
+    y = np.asarray([row[1] for row in descriptor_matrix])
+
+    # Number of grid cells along each axis
+    n_bins = int(round(np.sqrt(n_to_select)))
+
+    x_edges = np.linspace(np.min(x), np.max(x), n_bins + 1)
+    y_edges = np.linspace(np.min(y), np.max(y), n_bins + 1)
+    x_width = (np.max(x) - np.min(x)) / n_bins
+
+    selected_indices = []
+
+    for i in range(n_bins):
+        for j in range(n_bins):
+
+            # Include right edge on the last bin
+            if i == n_bins - 1:
+                x_mask = (
+                    (x >= x_edges[i]) &
+                    (x <= x_edges[i + 1])
+                )
+            else:
+                x_mask = (
+                    (x >= x_edges[i]) &
+                    (x < x_edges[i + 1])
+                )
+
+            if j == n_bins - 1:
+                y_mask = (
+                    (y >= y_edges[j]) &
+                    (y <= y_edges[j + 1])
+                )
+            else:
+                y_mask = (
+                    (y >= y_edges[j]) &
+                    (y < y_edges[j + 1])
+                )
+
+            candidates = np.where(x_mask & y_mask)[0] # returns points that lie within the grid cell
+
+            if len(candidates) == 0: # if no points lie within the grid cell, continue
+                continue
+
+            # Grid cell centre. If stagger, displace x_center
+            x_center = 0.5 * (x_edges[i] + x_edges[i + 1])
+            if stagger:
+                if j % 2 == 0:
+                    x_center -= 0.25*x_width
+                else:
+                    x_center += 0.25*x_width
+            
+            y_center = 0.5 * (y_edges[j] + y_edges[j + 1])
+
+            # distance of points from grid cell centre
+            d = np.sqrt(
+                ((x[candidates] - x_center) / 1.0) ** 2 +
+                ((y[candidates] - y_center) / 180.0) ** 2
+            )
+
+            selected_indices.append(candidates[np.argmin(d)])
+
+    return np.array(selected_indices)
