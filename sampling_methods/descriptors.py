@@ -63,7 +63,7 @@ def _patch_dscribe_system_init_keyword_args():
 
 _patch_dscribe_system_init_keyword_args()
 
-def get_descriptor(descriptor_type, atoms, encoder=None):
+def get_descriptor(descriptor_type, atoms, encoder=None, force_weight=1.0, energy_weight=1.0):
     """
     Router to the appropriate descriptor function. 
         - "bond_lengths": C-C bond lengths
@@ -74,6 +74,7 @@ def get_descriptor(descriptor_type, atoms, encoder=None):
         - "soap": SOAP descriptor using the DScribe library
         - "acsf": ACSF descriptor using the DScribe library
         - "mbtr": MBTR descriptor using the DScribe library
+        - "ci_score": score which qualifies how close the geometry is to a conical intersection
     """
     if descriptor_type == "bond_lengths":
         return get_bond_lengths(atoms)
@@ -91,10 +92,12 @@ def get_descriptor(descriptor_type, atoms, encoder=None):
         return get_energies(atoms)
     elif descriptor_type == "encoded_energies":
         return get_encoded_energies(atoms, encoder)
+    elif descriptor_type == "ci_score":
+        return get_ci_score(atoms, force_weight, energy_weight)
     else:
         raise ValueError(
             f"Unknown descriptor type: {descriptor_type}. "
-            f"Supported types: 'bond_lengths', 'bond_angles', 'soap', 'acsf', 'mbtr', 'energies', 'encoded_energies'"
+            f"Supported types: 'bond_lengths', 'bond_angles', 'soap', 'acsf', 'mbtr', 'energies', 'encoded_energies', 'ci_score'"
         )
 
 def get_bond_lengths(atoms):
@@ -187,6 +190,49 @@ def get_bond_angles(atoms):
 def get_energies(atoms):
     """Return the energies of the ASE Atoms object."""
     return atoms.info["REF_energy"][0]
+
+
+def get_ci_score(atoms, force_weight=1.0, energy_weight=1.0):
+    """Calculate a conical-intersection score for one geometry.
+
+    Scores are calculated for the two adjacent pairs of electronic states:
+        (force_weight * RMS(F_j - F_i)) / (energy_weight * (E_j - E_i) + 1e-6)
+
+    The larger of the two scores is returned. Each pair's intermediate values
+    are printed for diagnostics.
+    """
+    if energy_weight < 0 or force_weight < 0:
+        raise ValueError("energy_weight and force_weight must be non-negative.")
+
+    energies = np.asarray(atoms.info["REF_energy"], dtype=float)
+    if energies.shape != (1, 3):
+        raise ValueError("atoms must provide exactly three energy levels.")
+    energies = energies[0]
+
+    if "REF_forces" in atoms.arrays:
+        forces = np.asarray(atoms.arrays["REF_forces"], dtype=float)
+    elif "REF_forces" in atoms.info:
+        forces = np.asarray(atoms.info["REF_forces"], dtype=float)
+    else:
+        raise KeyError("atoms must provide state-resolved 'REF_forces'.")
+
+    n_atoms = len(atoms)
+    if forces.shape != (n_atoms, 3, 3):
+        raise ValueError(
+            "REF_forces must have shape (n_atoms, 3, 3); "
+            f"got {forces.shape}."
+        )
+
+    pair_scores = []
+    for first, second in ((0, 1), (1, 2)):
+        gap = energies[second] - energies[first]
+        delta_forces = forces[:, second, :] - forces[:, first, :]
+        force_diff = np.sqrt(np.mean(delta_forces**2))
+        score = (force_weight * force_diff) + (1/(energy_weight * gap + 1e-6))
+        print(force_weight, energy_weight)
+        pair_scores.append(score)
+
+    return [float(max(pair_scores))]
 
 def get_encoded_energies(atoms, encoder):
     """
