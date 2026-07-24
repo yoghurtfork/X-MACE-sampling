@@ -229,7 +229,6 @@ def get_ci_score(atoms, force_weight=1.0, energy_weight=1.0):
         delta_forces = forces[:, second, :] - forces[:, first, :]
         force_diff = np.sqrt(np.mean(delta_forces**2))
         score = (force_weight * force_diff) + (1/(energy_weight * gap + 1e-6))
-        print(force_weight, energy_weight)
         pair_scores.append(score)
 
     return [float(max(pair_scores))]
