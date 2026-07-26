@@ -1,0 +1,10 @@
+descriptor,selector,descriptor_kwargs,selector_kwargs
+energies,farthest_point_sampling,{},{}
+energies,k_means_clustering_weighted,{},{'n_clusters': 25}
+energies,k_means_clustering,{},{'n_clusters': 25}
+latent_space,farthest_point_sampling,{},{}
+latent_space,k_means_clustering_weighted,{},{'n_clusters': 25}
+latent_space,k_means_clustering,{},{'n_clusters': 25}
+acsf,farthest_point_sampling,{},{}
+acsf,k_means_clustering_weighted,{},{'n_clusters': 25}
+acsf,k_means_clustering,{},{'n_clusters': 25}
