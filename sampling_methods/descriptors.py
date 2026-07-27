@@ -100,13 +100,8 @@ def get_descriptor(descriptor_type, atoms, encoder=None, force_weight=1.0, energ
             f"Supported types: 'bond_lengths', 'bond_angles', 'soap', 'acsf', 'mbtr', 'energies', 'encoded_energies', 'ci_score'"
         )
 
-def get_bond_lengths(atoms):
-    """Return C-C bond lengths for adjacent carbon atoms in an ASE Atoms object.
-
-    Adjacent carbon atoms are detected with ASE covalent-radius neighbor cutoffs.
-    Distances are returned in Angstrom, matching ASE position units.
-    """
-    symbols = atoms.get_chemical_symbols()
+def _get_bond_graph(atoms):
+    """Return a deterministic covalent-bond adjacency map."""
     cutoffs = natural_cutoffs(atoms, mult=1.2)
     neighbor_list = NeighborList(
         cutoffs,
@@ -116,26 +111,40 @@ def get_bond_lengths(atoms):
     )
     neighbor_list.update(atoms)
 
-    bond_lengths = []
-    seen_pairs = set()
-
-    for atom_idx, symbol in enumerate(symbols):
-        if symbol != "C":
-            continue
-
+    adjacency = {atom_idx: set() for atom_idx in range(len(atoms))}
+    for atom_idx in range(len(atoms)):
         neighbor_indices, _ = neighbor_list.get_neighbors(atom_idx)
-        for neighbor_idx in neighbor_indices:
-            if symbols[neighbor_idx] != "C":
-                continue
+        adjacency[atom_idx].update(int(idx) for idx in neighbor_indices)
+    return adjacency
 
-            pair = tuple(sorted((atom_idx, int(neighbor_idx))))
-            if pair in seen_pairs:
-                continue
 
-            seen_pairs.add(pair)
-            bond_lengths.append(atoms.get_distance(*pair, mic=True))
+def _get_carbon_bonds(atoms, adjacency):
+    """Return adjacent carbon-index pairs in stable atom-index order."""
+    symbols = atoms.get_chemical_symbols()
+    return sorted(
+        {
+            tuple(sorted((atom_idx, neighbor_idx)))
+            for atom_idx, neighbor_indices in adjacency.items()
+            if symbols[atom_idx] == "C"
+            for neighbor_idx in neighbor_indices
+            if symbols[neighbor_idx] == "C"
+        }
+    )
 
-    return bond_lengths
+
+def get_bond_lengths(atoms):
+    """Return all covalently bonded C-C distances in deterministic order.
+
+    The carbon skeleton is inferred from covalent-radius neighbor cutoffs, so
+    this supports ethene, propene, butene, and larger hydrocarbons without
+    relying on fixed atom indices. Distances are returned in Angstrom.
+    """
+    adjacency = _get_bond_graph(atoms)
+    carbon_bonds = _get_carbon_bonds(atoms, adjacency)
+    if not carbon_bonds:
+        raise ValueError("Need at least one covalently bonded pair of carbon atoms.")
+
+    return [atoms.get_distance(*pair, mic=True) for pair in carbon_bonds]
 
 def get_bond_angles(atoms):
     """Return C-C-C bond angles for carbon triplets in an ASE Atoms object.
@@ -369,5 +378,61 @@ def get_mbtr(atoms):
     return mbtr_descriptor
 
 def get_dihedral(atoms):
-    angle = atoms.get_dihedral(4, 0, 1, 3)
-    return [angle]
+    """Return the torsion angle about the most substituted C-C bond.
+
+    Candidate C-C bonds are ranked by the number of hydrogens attached to
+    their endpoints. This selects the alkene bond in the ethene, propene, and
+    butene datasets. For each side of that bond, a carbon substituent is
+    preferred over other elements, giving H-C-C-H, C-C-C-H, and C-C-C-C
+    torsions respectively for those three molecules.
+    """
+    symbols = atoms.get_chemical_symbols()
+    adjacency = _get_bond_graph(atoms)
+    carbon_bonds = _get_carbon_bonds(atoms, adjacency)
+    if not carbon_bonds:
+        raise ValueError("Need at least one covalently bonded pair of carbon atoms.")
+
+    def attached_hydrogen_count(bond):
+        first, second = bond
+        return sum(
+            symbols[neighbor] == "H"
+            for endpoint, other in ((first, second), (second, first))
+            for neighbor in adjacency[endpoint]
+            if neighbor != other
+        )
+
+    central_first, central_second = min(
+        carbon_bonds,
+        key=lambda bond: (attached_hydrogen_count(bond), bond),
+    )
+
+    def choose_substituent(endpoint, other_endpoint):
+        candidates = [
+            neighbor
+            for neighbor in adjacency[endpoint]
+            if neighbor != other_endpoint
+        ]
+        if not candidates:
+            raise ValueError(
+                "Cannot define a dihedral because a central carbon has "
+                "no substituent."
+            )
+        return min(
+            candidates,
+            key=lambda idx: (symbols[idx] != "C", idx),
+        )
+
+    outer_first = choose_substituent(central_first, central_second)
+    outer_second = choose_substituent(central_second, central_first)
+    angle = atoms.get_dihedral(
+        outer_first,
+        central_first,
+        central_second,
+        outer_second,
+        mic=bool(np.any(atoms.pbc)),
+    )
+    # ASE reports dihedrals in [0, 360). Fold equivalent clockwise and
+    # anticlockwise rotations into [0, 180] so values close to 360 remain
+    # adjacent to values close to 0 in descriptor space and scatter plots.
+    unsigned_angle = min(angle, 360.0 - angle)
+    return [unsigned_angle]
