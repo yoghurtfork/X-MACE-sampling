@@ -12,7 +12,8 @@ Transfer-learning mode (the default) also requires:
 Common optional keys:
     base_n_geometries, transfer_n_geometries, descriptor_kwargs,
     selector_kwargs, seed, device, validation_fraction, batch_size, r_max,
-    max_epochs, transfer_learning, transfer_lr, base_learning_rate,
+    max_epochs, transfer_learning, cross_validation, k, transfer_lr,
+    base_learning_rate,
     full_learning_rate, base_max_epochs, full_max_epochs, patience, pca
 
 ``pca`` is either absent/false (the default), true, or an object of PCA kwargs.
@@ -33,7 +34,7 @@ import matplotlib
 import numpy as np
 import torch
 from sklearn.decomposition import PCA
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import KFold, train_test_split
 from sklearn.preprocessing import StandardScaler
 
 matplotlib.use("Agg")
@@ -611,6 +612,222 @@ def _train_scratch_model(
     }
 
 
+def _aggregate_fold_metrics(
+    fold_results: dict[str, dict[str, Any]]
+) -> dict[str, dict[str, float]]:
+    aggregate = {}
+    for metric in ("energy_mae_ev", "force_mae_ev_per_ang"):
+        values = np.asarray(
+            [fold["metrics"][metric] for fold in fold_results.values()],
+            dtype=float,
+        )
+        aggregate[metric] = {
+            "mean": float(np.mean(values)),
+            "variance": float(np.var(values)),
+        }
+    return aggregate
+
+
+def _train_k_fold_models(
+    *,
+    initial_model: torch.nn.Module,
+    all_atoms: list[Any],
+    test_atoms: list[Any],
+    model_prefix: str,
+    run_dir: Path,
+    data_builder_class: Any,
+    trainer_class: Any,
+    tester: Any,
+    loss_fn: torch.nn.Module,
+    device: torch.device,
+    seed: int,
+    k: int,
+    r_max: float,
+    batch_size: int,
+    max_epochs: int,
+    learning_rate: float,
+    early_stopping: bool,
+    patience: int,
+    restore_best: bool,
+    verbose: bool,
+    energy_key: str,
+    forces_key: str,
+    training: Any,
+) -> dict[str, Any]:
+    """Train, test, plot, and save a set of X-MACE K-fold models."""
+    if not 2 <= k <= len(all_atoms):
+        raise ValueError(
+            f"'k' must be between 2 and the {model_prefix} dataset size "
+            f"({len(all_atoms)})"
+        )
+    builder = data_builder_class(
+        cutoff=r_max,
+        energy_key=energy_key,
+        forces_key=forces_key,
+    )
+    all_loader = builder.load(
+        all_atoms, batch_size=batch_size, shuffle=False
+    )
+    test_loader = builder.load(
+        test_atoms, batch_size=batch_size, shuffle=False
+    )
+    trainer = trainer_class(
+        max_epochs=max_epochs,
+        early_stopping=early_stopping,
+        patience=patience,
+        restore_best=restore_best,
+        device=device,
+        verbose=verbose,
+    )
+    optimizer = torch.optim.Adam(
+        initial_model.parameters(), lr=learning_rate
+    )
+    training.seed_everything(seed)
+    started_at = time.time()
+    models, histories = trainer.train_k_fold_models(
+        initial_model,
+        all_loader,
+        optimizer,
+        loss_fn,
+        k=k,
+        seed=seed,
+    )
+    training_seconds = time.time() - started_at
+
+    fold_results = {}
+    artifacts = {}
+    model_paths = {}
+    for fold_number in range(1, k + 1):
+        model_key = f"model_{fold_number}"
+        fold_model = models[model_key].to(device)
+        metrics = _evaluate(fold_model, test_loader, tester)
+        metrics["best_epoch"] = int(
+            histories[model_key]["best_epoch"]
+        )
+        fold_model = fold_model.cpu()
+        model_path = (
+            run_dir / f"{model_prefix}_fold_{fold_number}.pt"
+        ).resolve()
+        torch.save(fold_model, model_path)
+        loss_plot = _save_loss_plot(
+            run_dir,
+            histories[model_key],
+            title=f"{model_prefix.replace('_', ' ').title()} fold {fold_number}",
+            filename=f"{model_prefix}_fold_{fold_number}_loss.png",
+        )
+        mae_plot = _save_epoch_mae_plot(
+            run_dir,
+            histories[model_key],
+            title=(
+                f"{model_prefix.replace('_', ' ').title()} "
+                f"fold {fold_number} validation MAE"
+            ),
+            filename=f"{model_prefix}_fold_{fold_number}_validation_mae.png",
+        )
+        fold_results[model_key] = {
+            "history": histories[model_key],
+            "metrics": metrics,
+            "model_path": str(model_path),
+        }
+        model_paths[model_key] = str(model_path)
+        artifacts[model_key] = {
+            "loss_plot": loss_plot,
+            "validation_mae_plot": mae_plot,
+        }
+
+    return {
+        "folds": fold_results,
+        "combined_validation": histories["combined"],
+        "aggregate_test_metrics": _aggregate_fold_metrics(fold_results),
+        "training_seconds": training_seconds,
+        "model_paths": model_paths,
+        "artifacts": artifacts,
+    }
+
+
+def _save_fold_selection_plot(
+    *,
+    run_dir: Path,
+    base_atoms: list[Any],
+    base_test_atoms: list[Any],
+    sampled_global_indices: np.ndarray,
+    fold_train_indices: np.ndarray,
+    fold_valid_indices: np.ndarray,
+    fold_number: int,
+    descriptors: Any,
+) -> str:
+    """Plot one transfer fold's train/validation membership."""
+    bond_lengths = np.asarray(
+        [
+            descriptors.get_descriptor("bond_lengths", atom)[0]
+            for atom in base_atoms
+        ]
+    )
+    dihedrals = np.asarray(
+        [
+            descriptors.get_descriptor("dihedral", atom)[0]
+            for atom in base_atoms
+        ]
+    )
+    test_bonds = [
+        descriptors.get_descriptor("bond_lengths", atom)[0]
+        for atom in base_test_atoms
+    ]
+    test_dihedrals = [
+        descriptors.get_descriptor("dihedral", atom)[0]
+        for atom in base_test_atoms
+    ]
+    fold_train_global = sampled_global_indices[fold_train_indices]
+    fold_valid_global = sampled_global_indices[fold_valid_indices]
+
+    fig, ax = plt.subplots(figsize=(6, 10))
+    ax.scatter(
+        bond_lengths,
+        dihedrals,
+        color="blue",
+        marker="o",
+        s=10,
+        alpha=0.25,
+        label="Candidate pool",
+    )
+    ax.scatter(
+        test_bonds,
+        test_dihedrals,
+        color="red",
+        marker="o",
+        s=10,
+        alpha=0.3,
+        label="Off-grid test set",
+    )
+    ax.scatter(
+        bond_lengths[fold_train_global],
+        dihedrals[fold_train_global],
+        color="black",
+        marker="o",
+        s=12,
+        label="Fold training samples",
+    )
+    ax.scatter(
+        bond_lengths[fold_valid_global],
+        dihedrals[fold_valid_global],
+        color="green",
+        marker="o",
+        s=16,
+        label="Fold validation samples",
+    )
+    ax.set(
+        title=f"Transfer sample selection: fold {fold_number}",
+        xlabel="Bond length",
+        ylabel="Dihedral angle",
+    )
+    ax.legend()
+    fig.tight_layout()
+    filename = f"transfer_model_fold_{fold_number}_selection.png"
+    fig.savefig(run_dir / filename, dpi=150)
+    plt.close(fig)
+    return filename
+
+
 def run_config(config_path: Path, output_dir: Path) -> Path:
     """Execute one input configuration and return its result JSON path."""
     (
@@ -645,6 +862,24 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         if not isinstance(transfer_learning_value, bool):
             raise ValueError("'transfer_learning' must be a JSON boolean")
         transfer_learning = transfer_learning_value
+        cross_validation_value = config.get("cross_validation", False)
+        if not isinstance(cross_validation_value, bool):
+            raise ValueError("'cross_validation' must be a JSON boolean")
+        cross_validation = cross_validation_value
+        if cross_validation:
+            if "k" not in config:
+                raise ValueError(
+                    "'k' is required when 'cross_validation' is true"
+                )
+            if isinstance(config["k"], bool) or not isinstance(
+                config["k"], int
+            ):
+                raise ValueError("'k' must be a JSON integer")
+            k = config["k"]
+            if k < 2:
+                raise ValueError("'k' must be at least 2")
+        else:
+            k = None
         max_epochs = int(config.get("max_epochs", MAX_EPOCHS))
         r_max = float(config.get("r_max", R_MAX))
         batch_size = int(config.get("batch_size", BATCH_SIZE))
@@ -655,7 +890,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         patience = int(config.get("patience", PATIENCE))
         device = _validate_device(str(config.get("device", DEVICE)))
 
-        if not 0.0 < validation_fraction < 1.0:
+        if not cross_validation and not 0.0 < validation_fraction < 1.0:
             raise ValueError("'validation_fraction' must be between 0 and 1")
         if max_epochs < 1 or batch_size < 1:
             raise ValueError("'max_epochs' and 'batch_size' must be positive")
@@ -683,12 +918,28 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
             raise ValueError("At least two grid geometries are required")
 
         all_indices = np.arange(len(base_atoms))
-        train_indices, valid_indices = train_test_split(
-            all_indices,
-            test_size=validation_fraction,
-            random_state=seed,
-            shuffle=True,
-        )
+        warnings = []
+        if cross_validation:
+            train_indices = all_indices
+            valid_indices = np.asarray([], dtype=int)
+            if "validation_fraction" in config:
+                warnings.append(
+                    "Ignoring 'validation_fraction' because "
+                    "cross-validation replaces the fixed validation split"
+                )
+        else:
+            train_indices, valid_indices = train_test_split(
+                all_indices,
+                test_size=validation_fraction,
+                random_state=seed,
+                shuffle=True,
+            )
+            if "k" in config:
+                warnings.append(
+                    "Ignoring 'k' because cross-validation is disabled"
+                )
+        for warning in warnings:
+            print(f"Warning: {warning}", file=sys.stderr)
         base_train_atoms = [base_atoms[i] for i in train_indices]
         base_valid_atoms = [base_atoms[i] for i in valid_indices]
         transfer_train_atoms = [transfer_atoms[i] for i in train_indices]
@@ -733,11 +984,12 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 "transfer_lr",
             }
             ignored_keys = sorted(transfer_only_keys.intersection(config))
-            warnings = [
-                "Ignoring transfer-learning-only configuration keys: "
-                + ", ".join(ignored_keys)
-            ] if ignored_keys else []
-            for warning in warnings:
+            if ignored_keys:
+                warning = (
+                    "Ignoring transfer-learning-only configuration keys: "
+                    + ", ".join(ignored_keys)
+                )
+                warnings.append(warning)
                 print(f"Warning: {warning}", file=sys.stderr)
 
             base_max_epochs = int(
@@ -761,6 +1013,157 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     "'base_learning_rate' and 'full_learning_rate' "
                     "must be positive"
                 )
+
+            if cross_validation:
+                cross_common = {
+                    "run_dir": run_dir,
+                    "data_builder_class": AtomDataLoaderBuilder,
+                    "trainer_class": Trainer,
+                    "tester": tester,
+                    "loss_fn": loss_fn,
+                    "device": device,
+                    "seed": seed,
+                    "k": k,
+                    "r_max": r_max,
+                    "batch_size": batch_size,
+                    "early_stopping": bool(
+                        config.get("early_stopping", True)
+                    ),
+                    "patience": patience,
+                    "restore_best": bool(
+                        config.get("restore_best", True)
+                    ),
+                    "verbose": bool(config.get("verbose", True)),
+                    "energy_key": str(
+                        config.get("energy_key", "REF_energy")
+                    ),
+                    "forces_key": str(
+                        config.get("forces_key", "REF_forces")
+                    ),
+                    "training": training,
+                }
+
+                base_builder = AtomDataLoaderBuilder(
+                    cutoff=r_max,
+                    energy_key=cross_common["energy_key"],
+                    forces_key=cross_common["forces_key"],
+                )
+                base_builder.load(
+                    base_atoms, batch_size=batch_size, shuffle=False
+                )
+                training.seed_everything(seed)
+                base_initial_model = initialise_autoencoder(
+                    base_builder.get_metadata(), preset="default_ani"
+                ).to(device)
+                base_cv = _train_k_fold_models(
+                    initial_model=base_initial_model,
+                    all_atoms=base_atoms,
+                    test_atoms=base_test_atoms,
+                    model_prefix="base_model",
+                    max_epochs=base_max_epochs,
+                    learning_rate=base_learning_rate,
+                    **cross_common,
+                )
+
+                full_builder = AtomDataLoaderBuilder(
+                    cutoff=r_max,
+                    energy_key=cross_common["energy_key"],
+                    forces_key=cross_common["forces_key"],
+                )
+                full_builder.load(
+                    transfer_atoms, batch_size=batch_size, shuffle=False
+                )
+                training.seed_everything(seed)
+                full_initial_model = initialise_autoencoder(
+                    full_builder.get_metadata(), preset="default_ani"
+                ).to(device)
+                full_cv = _train_k_fold_models(
+                    initial_model=full_initial_model,
+                    all_atoms=transfer_atoms,
+                    test_atoms=transfer_test_atoms,
+                    model_prefix="full_model",
+                    max_epochs=full_max_epochs,
+                    learning_rate=full_learning_rate,
+                    **cross_common,
+                )
+                scratch_mae_plot = _save_scratch_mae_plot(
+                    run_dir,
+                    base_cv["aggregate_test_metrics"][
+                        "energy_mae_ev"
+                    ]["mean"],
+                    full_cv["aggregate_test_metrics"][
+                        "energy_mae_ev"
+                    ]["mean"],
+                )
+                result.update(
+                    {
+                        "status": "completed",
+                        "config": config,
+                        "transfer_learning": False,
+                        "cross_validation": True,
+                        "k": k,
+                        "warnings": warnings,
+                        "seed": seed,
+                        "device": str(device),
+                        "dataset_sizes": {
+                            "base": len(base_atoms),
+                            "transfer": len(transfer_atoms),
+                            "base_test": len(base_test_atoms),
+                            "transfer_test": len(transfer_test_atoms),
+                        },
+                        "metrics": {
+                            "base_models": base_cv[
+                                "aggregate_test_metrics"
+                            ],
+                            "full_high_fidelity_models": full_cv[
+                                "aggregate_test_metrics"
+                            ],
+                        },
+                        "cross_validation_training": {
+                            "base_models": {
+                                "folds": base_cv["folds"],
+                                "combined_validation": base_cv[
+                                    "combined_validation"
+                                ],
+                                "aggregate_test_metrics": base_cv[
+                                    "aggregate_test_metrics"
+                                ],
+                                "training_seconds": base_cv[
+                                    "training_seconds"
+                                ],
+                            },
+                            "full_high_fidelity_models": {
+                                "folds": full_cv["folds"],
+                                "combined_validation": full_cv[
+                                    "combined_validation"
+                                ],
+                                "aggregate_test_metrics": full_cv[
+                                    "aggregate_test_metrics"
+                                ],
+                                "training_seconds": full_cv[
+                                    "training_seconds"
+                                ],
+                            },
+                        },
+                        "models": {
+                            "base_models": base_cv["model_paths"],
+                            "full_high_fidelity_models": full_cv[
+                                "model_paths"
+                            ],
+                        },
+                        "artifacts": {
+                            "base_models": base_cv["artifacts"],
+                            "full_high_fidelity_models": full_cv[
+                                "artifacts"
+                            ],
+                            "energy_mae_comparison_plot": (
+                                scratch_mae_plot
+                            ),
+                        },
+                    }
+                )
+                _write_json(result_path, result)
+                return result_path
 
             scratch_common = {
                 "data_builder_class": AtomDataLoaderBuilder,
@@ -841,6 +1244,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     "status": "completed",
                     "config": config,
                     "transfer_learning": False,
+                    "cross_validation": False,
                     "warnings": warnings,
                     "seed": seed,
                     "device": str(device),
@@ -902,14 +1306,16 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         full_model_path = _path(
             _required(config, "full_model_path"), config_path
         )
-        split_plot = _save_split_plot(
-            run_dir,
-            base_atoms,
-            base_test_atoms,
-            train_indices,
-            valid_indices,
-            descriptors,
-        )
+        split_plot = None
+        if not cross_validation:
+            split_plot = _save_split_plot(
+                run_dir,
+                base_atoms,
+                base_test_atoms,
+                train_indices,
+                valid_indices,
+                descriptors,
+            )
         base_test_loader = data_builder.load(
             base_test_atoms, batch_size=batch_size, shuffle=False
         )
@@ -1028,6 +1434,137 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
             selector_name,
         )
 
+        if cross_validation:
+            transfer_initial_model = NaiveStrategy().apply(base_model)
+            transfer_cv = _train_k_fold_models(
+                initial_model=transfer_initial_model,
+                all_atoms=sampled_atoms,
+                test_atoms=transfer_test_atoms,
+                model_prefix="transfer_model",
+                run_dir=run_dir,
+                data_builder_class=AtomDataLoaderBuilder,
+                trainer_class=Trainer,
+                tester=tester,
+                loss_fn=loss_fn,
+                device=device,
+                seed=seed,
+                k=k,
+                r_max=r_max,
+                batch_size=batch_size,
+                max_epochs=max_epochs,
+                learning_rate=transfer_lr,
+                early_stopping=bool(
+                    config.get("early_stopping", True)
+                ),
+                patience=patience,
+                restore_best=bool(config.get("restore_best", True)),
+                verbose=bool(config.get("verbose", True)),
+                energy_key=str(config.get("energy_key", "REF_energy")),
+                forces_key=str(config.get("forces_key", "REF_forces")),
+                training=training,
+            )
+            sampled_global_indices = train_indices[sampled_indices]
+            fold_selection_plots = {}
+            splitter = KFold(
+                n_splits=k, shuffle=True, random_state=seed
+            )
+            for fold_number, (
+                fold_train_indices,
+                fold_valid_indices,
+            ) in enumerate(
+                splitter.split(range(len(sampled_atoms))), start=1
+            ):
+                model_key = f"model_{fold_number}"
+                fold_selection_plots[model_key] = (
+                    _save_fold_selection_plot(
+                        run_dir=run_dir,
+                        base_atoms=base_atoms,
+                        base_test_atoms=base_test_atoms,
+                        sampled_global_indices=sampled_global_indices,
+                        fold_train_indices=fold_train_indices,
+                        fold_valid_indices=fold_valid_indices,
+                        fold_number=fold_number,
+                        descriptors=descriptors,
+                    )
+                )
+                transfer_cv["artifacts"][model_key][
+                    "selection_plot"
+                ] = fold_selection_plots[model_key]
+
+            mean_transfer_energy_mae = transfer_cv[
+                "aggregate_test_metrics"
+            ]["energy_mae_ev"]["mean"]
+            mae_plot = _save_mae_plot(
+                run_dir,
+                base_metrics["energy_mae_ev"],
+                full_metrics["energy_mae_ev"],
+                mean_transfer_energy_mae,
+            )
+            result.update(
+                {
+                    "status": "completed",
+                    "config": config,
+                    "transfer_learning": True,
+                    "cross_validation": True,
+                    "k": k,
+                    "warnings": warnings,
+                    "seed": seed,
+                    "device": str(device),
+                    "dataset_sizes": {
+                        "base": len(base_atoms),
+                        "transfer": len(transfer_atoms),
+                        "base_test": len(base_test_atoms),
+                        "transfer_test": len(transfer_test_atoms),
+                        "selection_pool": len(train_indices),
+                        "sampled": len(sampled_indices),
+                    },
+                    "sampled_indices": sampled_indices,
+                    "descriptor": {
+                        "name": descriptor_name,
+                        "kwargs": descriptor_kwargs,
+                        "shape": raw_descriptor_shape,
+                        "pca_shape": pca_shape,
+                    },
+                    "selector": {
+                        "name": selector_name,
+                        "kwargs": selector_kwargs,
+                        "n_samples": n_samples,
+                    },
+                    "metrics": {
+                        "base_model": base_metrics,
+                        "full_high_fidelity_model": full_metrics,
+                        "transfer_models": transfer_cv[
+                            "aggregate_test_metrics"
+                        ],
+                    },
+                    "cross_validation_training": {
+                        "transfer_models": {
+                            "folds": transfer_cv["folds"],
+                            "combined_validation": transfer_cv[
+                                "combined_validation"
+                            ],
+                            "aggregate_test_metrics": transfer_cv[
+                                "aggregate_test_metrics"
+                            ],
+                            "training_seconds": transfer_cv[
+                                "training_seconds"
+                            ],
+                        }
+                    },
+                    "models": {
+                        "transfer_models": transfer_cv["model_paths"]
+                    },
+                    "artifacts": {
+                        "sample_selection_plot": selection_plot,
+                        **pca_plots,
+                        "transfer_models": transfer_cv["artifacts"],
+                        "energy_mae_comparison_plot": mae_plot,
+                    },
+                }
+            )
+            _write_json(result_path, result)
+            return result_path
+
         transfer_train_loader = data_builder.load(
             sampled_atoms, batch_size=batch_size, shuffle=True
         )
@@ -1065,6 +1602,8 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 "status": "completed",
                 "config": config,
                 "transfer_learning": True,
+                "cross_validation": False,
+                "warnings": warnings,
                 "seed": seed,
                 "device": str(device),
                 "dataset_sizes": {
