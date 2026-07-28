@@ -1,201 +1,29 @@
-"""Train base and full high-fidelity X-MACE models from JSON configurations.
-
-This command reads scratch-training configurations (``transfer_learning:
-false``) from the same input directory as ``tester.py`` and writes to the same
-sequential ``run_<index>`` output directory.
-
-Required keys are ``base_xyz``, ``transfer_xyz``, ``base_test_xyz``, and
-``transfer_test_xyz``. Scratch epoch/learning-rate overrides and K-fold
-cross-validation use the same JSON settings previously supported by
-``tester.py``.
-"""
+"""Train base and full high-fidelity X-MACE models from JSON configurations."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
 from sklearn.model_selection import KFold, train_test_split
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.tester import (
-    BATCH_SIZE,
-    DEFAULT_INPUT_DIR,
-    DEFAULT_OUTPUT_DIR,
-    DEVICE,
-    MAX_EPOCHS,
-    PATIENCE,
-    R_MAX,
-    SEED,
-    VALIDATION_FRACTION,
-    _evaluate,
-    _import_project_modules,
-    _next_run_dir,
-    _path,
-    _read_atoms,
-    _required,
-    _save_epoch_mae_plot,
-    _save_loss_plot,
-    _save_fold_selection_plot,
-    _train_k_fold_models,
-    _validate_device,
-    _write_json,
+from scripts.helper import (
+    BATCH_SIZE, DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEVICE, MAX_EPOCHS,
+    PATIENCE, R_MAX, SCRATCH_LR, SEED, VALIDATION_FRACTION, _evaluate,
+    _import_project_modules, _is_scratch_config, _next_run_dir, _path,
+    _read_atoms, _required, _save_epoch_mae_plot, _save_fold_selection_plot,
+    _save_loss_plot, _save_scratch_mae_plot, _train_k_fold_models,
+    _train_model, _validate_device, _write_json,
 )
-
-SCRATCH_LR = 1.0e-3
-
-
-def _save_scratch_mae_plot(
-    run_dir: Path,
-    base_metrics: dict[str, Any],
-    full_metrics: dict[str, Any],
-    base_best_epoch: Any,
-    full_best_epoch: Any,
-    *,
-    cross_validation: bool,
-) -> str:
-    categories = ["Base model", "Full HF model"]
-    colors = ["#377eb8", "#ff7f00"]
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
-
-    if cross_validation:
-        best_values = [base_best_epoch[0], full_best_epoch[0]]
-        best_errors = [
-            np.sqrt(base_best_epoch[1]),
-            np.sqrt(full_best_epoch[1]),
-        ]
-    else:
-        best_values = [base_best_epoch, full_best_epoch]
-        best_errors = None
-    best_bars = axes[0].bar(
-        categories,
-        best_values,
-        yerr=best_errors,
-        capsize=5 if cross_validation else 0,
-        color=colors,
-    )
-    axes[0].bar_label(best_bars, fmt="%.1f", padding=3)
-    axes[0].set(ylabel="Best epoch", title="Best training epoch")
-    axes[0].grid(axis="y", alpha=0.3)
-
-    for ax, (metric, ylabel, title) in zip(
-        axes[1:],
-        (
-        (
-            "energy_mae_ev",
-            "Mean energy MAE, eV",
-            "Final energy MAE",
-        ),
-        (
-            "force_mae_ev_per_ang",
-            "Mean force MAE, eV/Å",
-            "Final force MAE",
-        ),
-        ),
-    ):
-        if cross_validation:
-            values = [
-                base_metrics[metric]["mean"],
-                full_metrics[metric]["mean"],
-            ]
-            errors = [
-                np.sqrt(base_metrics[metric]["variance"]),
-                np.sqrt(full_metrics[metric]["variance"]),
-            ]
-        else:
-            values = [base_metrics[metric], full_metrics[metric]]
-            errors = None
-        bars = ax.bar(
-            categories,
-            values,
-            yerr=errors,
-            capsize=5 if cross_validation else 0,
-            color=colors,
-        )
-        ax.bar_label(bars, fmt="%.4f", padding=3)
-        ax.set(ylabel=ylabel, title=title)
-        ax.grid(axis="y", alpha=0.3)
-    fig.suptitle("Models trained from scratch")
-    fig.tight_layout()
-    filename = "final_metrics_comparison.png"
-    fig.savefig(run_dir / filename, dpi=150)
-    plt.close(fig)
-    return filename
-
-
-def _train_model(
-    *,
-    train_atoms: list[Any],
-    valid_atoms: list[Any],
-    test_atoms: list[Any],
-    builder_class: Any,
-    trainer_class: Any,
-    initialise_autoencoder: Any,
-    tester: Any,
-    loss_fn: torch.nn.Module,
-    device: torch.device,
-    seed: int,
-    r_max: float,
-    batch_size: int,
-    max_epochs: int,
-    learning_rate: float,
-    early_stopping: bool,
-    patience: int,
-    restore_best: bool,
-    verbose: bool,
-    energy_key: str,
-    forces_key: str,
-    training: Any,
-) -> dict[str, Any]:
-    builder = builder_class(
-        cutoff=r_max, energy_key=energy_key, forces_key=forces_key
-    )
-    train_loader = builder.load(
-        train_atoms, batch_size=batch_size, shuffle=True
-    )
-    valid_loader = builder.load(
-        valid_atoms, batch_size=batch_size, shuffle=False
-    )
-    test_loader = builder.load(
-        test_atoms, batch_size=batch_size, shuffle=False
-    )
-    training.seed_everything(seed)
-    model = initialise_autoencoder(
-        builder.get_metadata(), preset="default_ani", load_base="ani500k"
-    ).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    trainer = trainer_class(
-        max_epochs=max_epochs,
-        early_stopping=early_stopping,
-        patience=patience,
-        restore_best=restore_best,
-        device=device,
-        verbose=verbose,
-    )
-    started_at = time.time()
-    model, history = trainer.train_model(
-        model, train_loader, valid_loader, optimizer, loss_fn
-    )
-    metrics = _evaluate(model, test_loader, tester)
-    metrics["best_epoch"] = int(history["best_epoch"])
-    return {
-        "model": model,
-        "history": history,
-        "metrics": metrics,
-        "training_seconds": time.time() - started_at,
-        "max_epochs": max_epochs,
-        "learning_rate": learning_rate,
-    }
 
 
 def run_config(config_path: Path, output_dir: Path) -> Path:
@@ -583,14 +411,6 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         )
         _write_json(result_path, result)
         raise
-
-
-def _is_scratch_config(path: Path) -> bool:
-    try:
-        config = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    return isinstance(config, dict) and config.get("transfer_learning") is False
 
 
 def main() -> int:
