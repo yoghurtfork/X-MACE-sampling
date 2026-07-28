@@ -1,20 +1,17 @@
-"""Run JSON-configured X-MACE sampling and transfer-learning experiments.
+"""Run JSON-configured X-MACE transfer-learning experiments.
 
 Each ``*.json`` file in ``scripts/input`` is treated as one independent run.
 Results are written to the next available ``scripts/output/run_<index>`` folder.
 
-Always-required JSON keys:
+Required JSON keys:
     base_xyz, transfer_xyz, base_test_xyz, transfer_test_xyz
-
-Transfer-learning mode (the default) also requires:
     base_model_path, full_model_path, descriptor, selector, n_samples
 
 Common optional keys:
     base_n_geometries, transfer_n_geometries, descriptor_kwargs,
     selector_kwargs, seed, device, validation_fraction, batch_size, r_max,
     max_epochs, transfer_learning, cross_validation, k, transfer_lr,
-    base_learning_rate,
-    full_learning_rate, base_max_epochs, full_max_epochs, patience, pca
+    patience, pca
 
 ``pca`` is either absent/false (the default), true, or an object of PCA kwargs.
 Paths may be absolute or relative to the input JSON file.
@@ -52,7 +49,6 @@ MAX_EPOCHS = 100
 R_MAX = 5.0
 BATCH_SIZE = 64
 TRANSFER_LR = 5.0e-4
-SCRATCH_LR = 1.0e-3
 DEVICE = "cpu"
 VALIDATION_FRACTION = 0.1
 PATIENCE = 15
@@ -506,110 +502,59 @@ def _save_pca_selection_plots(
 
 def _save_mae_plot(
     run_dir: Path,
-    base_mae: float,
-    full_mae: float,
-    transfer_mae: float,
-) -> str:
-    categories = ["Base model", "Full HF model", "Transfer model"]
-    values = [base_mae, full_mae, transfer_mae]
-    fig, ax = plt.subplots()
-    bars = ax.bar(categories, values, color=["#377eb8", "#ff7f00", "#fdbf6f"])
-    ax.bar_label(bars, fmt="%.4f", padding=3)
-    ax.set(ylabel="Mean energy MAE, eV", title="Multi-fidelity transfer learning")
-    ax.grid(axis="y", alpha=0.3)
-    fig.tight_layout()
-    filename = "energy_mae_comparison.png"
-    fig.savefig(run_dir / filename, dpi=150)
-    plt.close(fig)
-    return filename
-
-
-def _save_scratch_mae_plot(
-    run_dir: Path, base_mae: float, full_mae: float
-) -> str:
-    categories = ["Base model", "Full HF model"]
-    values = [base_mae, full_mae]
-    fig, ax = plt.subplots()
-    bars = ax.bar(categories, values, color=["#377eb8", "#ff7f00"])
-    ax.bar_label(bars, fmt="%.4f", padding=3)
-    ax.set(ylabel="Mean energy MAE, eV", title="Models trained from scratch")
-    ax.grid(axis="y", alpha=0.3)
-    fig.tight_layout()
-    filename = "scratch_energy_mae_comparison.png"
-    fig.savefig(run_dir / filename, dpi=150)
-    plt.close(fig)
-    return filename
-
-
-def _train_scratch_model(
+    base_metrics: dict[str, float],
+    full_metrics: dict[str, float],
+    transfer_metrics: dict[str, Any],
     *,
-    name: str,
-    train_atoms: list[Any],
-    valid_atoms: list[Any],
-    test_atoms: list[Any],
-    data_builder_class: Any,
-    trainer_class: Any,
-    initialise_autoencoder: Any,
-    tester: Any,
-    loss_fn: torch.nn.Module,
-    device: torch.device,
-    seed: int,
-    r_max: float,
-    batch_size: int,
-    max_epochs: int,
-    learning_rate: float,
-    early_stopping: bool,
-    patience: int,
-    restore_best: bool,
-    verbose: bool,
-    energy_key: str,
-    forces_key: str,
-    training: Any,
-) -> dict[str, Any]:
-    """Initialize, train, and test one independent model from scratch."""
-    builder = data_builder_class(
-        cutoff=r_max,
-        energy_key=energy_key,
-        forces_key=forces_key,
-    )
-    train_loader = builder.load(
-        train_atoms, batch_size=batch_size, shuffle=True
-    )
-    valid_loader = builder.load(
-        valid_atoms, batch_size=batch_size, shuffle=False
-    )
-    test_loader = builder.load(
-        test_atoms, batch_size=batch_size, shuffle=False
-    )
-    training.seed_everything(seed)
-    model = initialise_autoencoder(
-        builder.get_metadata(), preset="default_ani"
-    ).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    trainer = trainer_class(
-        max_epochs=max_epochs,
-        early_stopping=early_stopping,
-        patience=patience,
-        restore_best=restore_best,
-        device=device,
-        verbose=verbose,
-    )
-    started_at = time.time()
-    model, history = trainer.train_model(
-        model, train_loader, valid_loader, optimizer, loss_fn
-    )
-    training_seconds = time.time() - started_at
-    metrics = _evaluate(model, test_loader, tester)
-    metrics["best_epoch"] = int(history["best_epoch"])
-    return {
-        "name": name,
-        "model": model,
-        "history": history,
-        "metrics": metrics,
-        "training_seconds": training_seconds,
-        "max_epochs": max_epochs,
-        "learning_rate": learning_rate,
-    }
+    cross_validation: bool,
+) -> dict[str, str]:
+    categories = ["Base model", "Full HF model", "Transfer model"]
+    colors = ["#377eb8", "#ff7f00", "#fdbf6f"]
+    plots = {}
+    for metric, ylabel, filename, artifact_key in (
+        (
+            "energy_mae_ev",
+            "Mean energy MAE, eV",
+            "energy_mae_comparison.png",
+            "energy_mae_comparison_plot",
+        ),
+        (
+            "force_mae_ev_per_ang",
+            "Mean force MAE, eV/Å",
+            "force_mae_comparison.png",
+            "force_mae_comparison_plot",
+        ),
+    ):
+        if cross_validation:
+            transfer_value = transfer_metrics[metric]["mean"]
+            transfer_error = np.sqrt(
+                transfer_metrics[metric]["variance"]
+            )
+        else:
+            transfer_value = transfer_metrics[metric]
+            transfer_error = 0.0
+        values = [
+            base_metrics[metric],
+            full_metrics[metric],
+            transfer_value,
+        ]
+        errors = [0.0, 0.0, transfer_error]
+        fig, ax = plt.subplots()
+        bars = ax.bar(
+            categories,
+            values,
+            yerr=errors if cross_validation else None,
+            capsize=5 if cross_validation else 0,
+            color=colors,
+        )
+        ax.bar_label(bars, fmt="%.4f", padding=3)
+        ax.set(ylabel=ylabel, title="Multi-fidelity transfer learning")
+        ax.grid(axis="y", alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(run_dir / filename, dpi=150)
+        plt.close(fig)
+        plots[artifact_key] = filename
+    return plots
 
 
 def _aggregate_fold_metrics(
@@ -754,6 +699,7 @@ def _save_fold_selection_plot(
     fold_train_indices: np.ndarray,
     fold_valid_indices: np.ndarray,
     fold_number: int,
+    model_prefix: str,
     descriptors: Any,
 ) -> str:
     """Plot one transfer fold's train/validation membership."""
@@ -816,13 +762,16 @@ def _save_fold_selection_plot(
         label="Fold validation samples",
     )
     ax.set(
-        title=f"Transfer sample selection: fold {fold_number}",
+        title=(
+            f"{model_prefix.replace('_', ' ').title()} "
+            f"selection: fold {fold_number}"
+        ),
         xlabel="Bond length",
         ylabel="Dihedral angle",
     )
     ax.legend()
     fig.tight_layout()
-    filename = f"transfer_model_fold_{fold_number}_selection.png"
+    filename = f"{model_prefix}_fold_{fold_number}_selection.png"
     fig.savefig(run_dir / filename, dpi=150)
     plt.close(fig)
     return filename
@@ -846,6 +795,14 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     if not isinstance(config, dict):
         raise ValueError("The top-level JSON value must be an object")
+    transfer_learning = config.get("transfer_learning", True)
+    if not isinstance(transfer_learning, bool):
+        raise ValueError("'transfer_learning' must be a JSON boolean")
+    if not transfer_learning:
+        raise ValueError(
+            "tester.py only runs transfer-learning configurations; "
+            "use base_full_trainer.py when 'transfer_learning' is false"
+        )
 
     run_dir = _next_run_dir(output_dir)
     result_path = run_dir / "result.json"
@@ -858,10 +815,6 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
 
     try:
         seed = int(config.get("seed", SEED))
-        transfer_learning_value = config.get("transfer_learning", True)
-        if not isinstance(transfer_learning_value, bool):
-            raise ValueError("'transfer_learning' must be a JSON boolean")
-        transfer_learning = transfer_learning_value
         cross_validation_value = config.get("cross_validation", False)
         if not isinstance(cross_validation_value, bool):
             raise ValueError("'cross_validation' must be a JSON boolean")
@@ -941,7 +894,6 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         for warning in warnings:
             print(f"Warning: {warning}", file=sys.stderr)
         base_train_atoms = [base_atoms[i] for i in train_indices]
-        base_valid_atoms = [base_atoms[i] for i in valid_indices]
         transfer_train_atoms = [transfer_atoms[i] for i in train_indices]
         transfer_valid_atoms = [transfer_atoms[i] for i in valid_indices]
 
@@ -970,335 +922,6 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         loss_fn = modules.InvariantsWeightedEnergyForcesNacsDipoleLoss(
             **loss_kwargs
         ).to(device)
-
-        if not transfer_learning:
-            transfer_only_keys = {
-                "base_model_path",
-                "full_model_path",
-                "descriptor",
-                "descriptor_kwargs",
-                "selector",
-                "selector_kwargs",
-                "n_samples",
-                "pca",
-                "transfer_lr",
-            }
-            ignored_keys = sorted(transfer_only_keys.intersection(config))
-            if ignored_keys:
-                warning = (
-                    "Ignoring transfer-learning-only configuration keys: "
-                    + ", ".join(ignored_keys)
-                )
-                warnings.append(warning)
-                print(f"Warning: {warning}", file=sys.stderr)
-
-            base_max_epochs = int(
-                config.get("base_max_epochs", max_epochs)
-            )
-            full_max_epochs = int(
-                config.get("full_max_epochs", max_epochs)
-            )
-            base_learning_rate = float(
-                config.get("base_learning_rate", SCRATCH_LR)
-            )
-            full_learning_rate = float(
-                config.get("full_learning_rate", SCRATCH_LR)
-            )
-            if base_max_epochs < 1 or full_max_epochs < 1:
-                raise ValueError(
-                    "'base_max_epochs' and 'full_max_epochs' must be positive"
-                )
-            if base_learning_rate <= 0 or full_learning_rate <= 0:
-                raise ValueError(
-                    "'base_learning_rate' and 'full_learning_rate' "
-                    "must be positive"
-                )
-
-            if cross_validation:
-                cross_common = {
-                    "run_dir": run_dir,
-                    "data_builder_class": AtomDataLoaderBuilder,
-                    "trainer_class": Trainer,
-                    "tester": tester,
-                    "loss_fn": loss_fn,
-                    "device": device,
-                    "seed": seed,
-                    "k": k,
-                    "r_max": r_max,
-                    "batch_size": batch_size,
-                    "early_stopping": bool(
-                        config.get("early_stopping", True)
-                    ),
-                    "patience": patience,
-                    "restore_best": bool(
-                        config.get("restore_best", True)
-                    ),
-                    "verbose": bool(config.get("verbose", True)),
-                    "energy_key": str(
-                        config.get("energy_key", "REF_energy")
-                    ),
-                    "forces_key": str(
-                        config.get("forces_key", "REF_forces")
-                    ),
-                    "training": training,
-                }
-
-                base_builder = AtomDataLoaderBuilder(
-                    cutoff=r_max,
-                    energy_key=cross_common["energy_key"],
-                    forces_key=cross_common["forces_key"],
-                )
-                base_builder.load(
-                    base_atoms, batch_size=batch_size, shuffle=False
-                )
-                training.seed_everything(seed)
-                base_initial_model = initialise_autoencoder(
-                    base_builder.get_metadata(), preset="default_ani"
-                ).to(device)
-                base_cv = _train_k_fold_models(
-                    initial_model=base_initial_model,
-                    all_atoms=base_atoms,
-                    test_atoms=base_test_atoms,
-                    model_prefix="base_model",
-                    max_epochs=base_max_epochs,
-                    learning_rate=base_learning_rate,
-                    **cross_common,
-                )
-
-                full_builder = AtomDataLoaderBuilder(
-                    cutoff=r_max,
-                    energy_key=cross_common["energy_key"],
-                    forces_key=cross_common["forces_key"],
-                )
-                full_builder.load(
-                    transfer_atoms, batch_size=batch_size, shuffle=False
-                )
-                training.seed_everything(seed)
-                full_initial_model = initialise_autoencoder(
-                    full_builder.get_metadata(), preset="default_ani"
-                ).to(device)
-                full_cv = _train_k_fold_models(
-                    initial_model=full_initial_model,
-                    all_atoms=transfer_atoms,
-                    test_atoms=transfer_test_atoms,
-                    model_prefix="full_model",
-                    max_epochs=full_max_epochs,
-                    learning_rate=full_learning_rate,
-                    **cross_common,
-                )
-                scratch_mae_plot = _save_scratch_mae_plot(
-                    run_dir,
-                    base_cv["aggregate_test_metrics"][
-                        "energy_mae_ev"
-                    ]["mean"],
-                    full_cv["aggregate_test_metrics"][
-                        "energy_mae_ev"
-                    ]["mean"],
-                )
-                result.update(
-                    {
-                        "status": "completed",
-                        "config": config,
-                        "transfer_learning": False,
-                        "cross_validation": True,
-                        "k": k,
-                        "warnings": warnings,
-                        "seed": seed,
-                        "device": str(device),
-                        "dataset_sizes": {
-                            "base": len(base_atoms),
-                            "transfer": len(transfer_atoms),
-                            "base_test": len(base_test_atoms),
-                            "transfer_test": len(transfer_test_atoms),
-                        },
-                        "metrics": {
-                            "base_models": base_cv[
-                                "aggregate_test_metrics"
-                            ],
-                            "full_high_fidelity_models": full_cv[
-                                "aggregate_test_metrics"
-                            ],
-                        },
-                        "cross_validation_training": {
-                            "base_models": {
-                                "folds": base_cv["folds"],
-                                "combined_validation": base_cv[
-                                    "combined_validation"
-                                ],
-                                "aggregate_test_metrics": base_cv[
-                                    "aggregate_test_metrics"
-                                ],
-                                "training_seconds": base_cv[
-                                    "training_seconds"
-                                ],
-                            },
-                            "full_high_fidelity_models": {
-                                "folds": full_cv["folds"],
-                                "combined_validation": full_cv[
-                                    "combined_validation"
-                                ],
-                                "aggregate_test_metrics": full_cv[
-                                    "aggregate_test_metrics"
-                                ],
-                                "training_seconds": full_cv[
-                                    "training_seconds"
-                                ],
-                            },
-                        },
-                        "models": {
-                            "base_models": base_cv["model_paths"],
-                            "full_high_fidelity_models": full_cv[
-                                "model_paths"
-                            ],
-                        },
-                        "artifacts": {
-                            "base_models": base_cv["artifacts"],
-                            "full_high_fidelity_models": full_cv[
-                                "artifacts"
-                            ],
-                            "energy_mae_comparison_plot": (
-                                scratch_mae_plot
-                            ),
-                        },
-                    }
-                )
-                _write_json(result_path, result)
-                return result_path
-
-            scratch_common = {
-                "data_builder_class": AtomDataLoaderBuilder,
-                "trainer_class": Trainer,
-                "initialise_autoencoder": initialise_autoencoder,
-                "tester": tester,
-                "loss_fn": loss_fn,
-                "device": device,
-                "seed": seed,
-                "r_max": r_max,
-                "batch_size": batch_size,
-                "early_stopping": bool(
-                    config.get("early_stopping", True)
-                ),
-                "patience": patience,
-                "restore_best": bool(config.get("restore_best", True)),
-                "verbose": bool(config.get("verbose", True)),
-                "energy_key": str(config.get("energy_key", "REF_energy")),
-                "forces_key": str(config.get("forces_key", "REF_forces")),
-                "training": training,
-            }
-            base_run = _train_scratch_model(
-                name="base_model",
-                train_atoms=base_train_atoms,
-                valid_atoms=base_valid_atoms,
-                test_atoms=base_test_atoms,
-                max_epochs=base_max_epochs,
-                learning_rate=base_learning_rate,
-                **scratch_common,
-            )
-            full_run = _train_scratch_model(
-                name="full_high_fidelity_model",
-                train_atoms=transfer_train_atoms,
-                valid_atoms=transfer_valid_atoms,
-                test_atoms=transfer_test_atoms,
-                max_epochs=full_max_epochs,
-                learning_rate=full_learning_rate,
-                **scratch_common,
-            )
-
-            base_model_output_path = (run_dir / "base_model.pt").resolve()
-            full_model_output_path = (run_dir / "full_model.pt").resolve()
-            torch.save(base_run["model"], base_model_output_path)
-            torch.save(full_run["model"], full_model_output_path)
-
-            base_loss_plot = _save_loss_plot(
-                run_dir,
-                base_run["history"],
-                title="Base model",
-                filename="base_loss.png",
-            )
-            full_loss_plot = _save_loss_plot(
-                run_dir,
-                full_run["history"],
-                title="Full high-fidelity model",
-                filename="full_loss.png",
-            )
-            base_epoch_mae_plot = _save_epoch_mae_plot(
-                run_dir,
-                base_run["history"],
-                title="Base-model validation MAE",
-                filename="base_validation_mae.png",
-            )
-            full_epoch_mae_plot = _save_epoch_mae_plot(
-                run_dir,
-                full_run["history"],
-                title="Full-model validation MAE",
-                filename="full_validation_mae.png",
-            )
-            scratch_mae_plot = _save_scratch_mae_plot(
-                run_dir,
-                base_run["metrics"]["energy_mae_ev"],
-                full_run["metrics"]["energy_mae_ev"],
-            )
-
-            result.update(
-                {
-                    "status": "completed",
-                    "config": config,
-                    "transfer_learning": False,
-                    "cross_validation": False,
-                    "warnings": warnings,
-                    "seed": seed,
-                    "device": str(device),
-                    "dataset_sizes": {
-                        "base": len(base_atoms),
-                        "transfer": len(transfer_atoms),
-                        "base_test": len(base_test_atoms),
-                        "transfer_test": len(transfer_test_atoms),
-                        "train": len(train_indices),
-                        "validation": len(valid_indices),
-                    },
-                    "train_indices": train_indices,
-                    "validation_indices": valid_indices,
-                    "metrics": {
-                        "base_model": base_run["metrics"],
-                        "full_high_fidelity_model": full_run["metrics"],
-                    },
-                    "scratch_training": {
-                        "base_model": {
-                            "best_epoch": base_run["history"]["best_epoch"],
-                            "training_seconds": base_run[
-                                "training_seconds"
-                            ],
-                            "max_epochs": base_run["max_epochs"],
-                            "learning_rate": base_run["learning_rate"],
-                            "history": base_run["history"],
-                        },
-                        "full_high_fidelity_model": {
-                            "best_epoch": full_run["history"]["best_epoch"],
-                            "training_seconds": full_run[
-                                "training_seconds"
-                            ],
-                            "max_epochs": full_run["max_epochs"],
-                            "learning_rate": full_run["learning_rate"],
-                            "history": full_run["history"],
-                        },
-                    },
-                    "models": {
-                        "base_model": str(base_model_output_path),
-                        "full_high_fidelity_model": str(
-                            full_model_output_path
-                        ),
-                    },
-                    "artifacts": {
-                        "base_loss_plot": base_loss_plot,
-                        "full_loss_plot": full_loss_plot,
-                        "base_validation_mae_plot": base_epoch_mae_plot,
-                        "full_validation_mae_plot": full_epoch_mae_plot,
-                        "energy_mae_comparison_plot": scratch_mae_plot,
-                    },
-                }
-            )
-            _write_json(result_path, result)
-            return result_path
 
         base_model_path = _path(
             _required(config, "base_model_path"), config_path
@@ -1484,6 +1107,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                         fold_train_indices=fold_train_indices,
                         fold_valid_indices=fold_valid_indices,
                         fold_number=fold_number,
+                        model_prefix="transfer_model",
                         descriptors=descriptors,
                     )
                 )
@@ -1491,14 +1115,12 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     "selection_plot"
                 ] = fold_selection_plots[model_key]
 
-            mean_transfer_energy_mae = transfer_cv[
-                "aggregate_test_metrics"
-            ]["energy_mae_ev"]["mean"]
-            mae_plot = _save_mae_plot(
+            mae_plots = _save_mae_plot(
                 run_dir,
-                base_metrics["energy_mae_ev"],
-                full_metrics["energy_mae_ev"],
-                mean_transfer_energy_mae,
+                base_metrics,
+                full_metrics,
+                transfer_cv["aggregate_test_metrics"],
+                cross_validation=True,
             )
             result.update(
                 {
@@ -1558,7 +1180,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                         "sample_selection_plot": selection_plot,
                         **pca_plots,
                         "transfer_models": transfer_cv["artifacts"],
-                        "energy_mae_comparison_plot": mae_plot,
+                        **mae_plots,
                     },
                 }
             )
@@ -1591,11 +1213,12 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         transfer_metrics["best_epoch"] = int(transfer_history["best_epoch"])
 
         loss_plot = _save_loss_plot(run_dir, transfer_history)
-        mae_plot = _save_mae_plot(
+        mae_plots = _save_mae_plot(
             run_dir,
-            base_metrics["energy_mae_ev"],
-            full_metrics["energy_mae_ev"],
-            transfer_metrics["energy_mae_ev"],
+            base_metrics,
+            full_metrics,
+            transfer_metrics,
+            cross_validation=False,
         )
         result.update(
             {
@@ -1644,7 +1267,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     "sample_selection_plot": selection_plot,
                     **pca_plots,
                     "transfer_loss_plot": loss_plot,
-                    "energy_mae_comparison_plot": mae_plot,
+                    **mae_plots,
                 },
             }
         )
@@ -1682,9 +1305,19 @@ def main() -> int:
 
     input_dir = args.input_dir.resolve()
     output_dir = args.output_dir.resolve()
-    config_paths = sorted(input_dir.glob("*.json"))
+    config_paths = []
+    for config_path in sorted(input_dir.glob("*.json")):
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(config, dict) and config.get("transfer_learning", True):
+            config_paths.append(config_path)
     if not config_paths:
-        print(f"No JSON input files found in {input_dir}", file=sys.stderr)
+        print(
+            f"No transfer-learning JSON input files found in {input_dir}",
+            file=sys.stderr,
+        )
         return 1
 
     failed = 0
