@@ -505,24 +505,44 @@ def _save_mae_plot(
     base_metrics: dict[str, float],
     full_metrics: dict[str, float],
     transfer_metrics: dict[str, Any],
+    transfer_best_epoch: Any,
     *,
     cross_validation: bool,
-) -> dict[str, str]:
+) -> str:
     categories = ["Base model", "Full HF model", "Transfer model"]
     colors = ["#377eb8", "#ff7f00", "#fdbf6f"]
-    plots = {}
-    for metric, ylabel, filename, artifact_key in (
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
+
+    if cross_validation:
+        best_epoch_value, best_epoch_variance = transfer_best_epoch
+        best_epoch_error = np.sqrt(best_epoch_variance)
+    else:
+        best_epoch_value = float(transfer_best_epoch)
+        best_epoch_error = 0.0
+    best_bars = axes[0].bar(
+        ["Transfer model"],
+        [best_epoch_value],
+        yerr=[best_epoch_error] if cross_validation else None,
+        capsize=5 if cross_validation else 0,
+        color=[colors[2]],
+    )
+    axes[0].bar_label(best_bars, fmt="%.1f", padding=3)
+    axes[0].set(ylabel="Best epoch", title="Best training epoch")
+    axes[0].grid(axis="y", alpha=0.3)
+
+    for ax, (metric, ylabel, title) in zip(
+        axes[1:],
+        (
         (
             "energy_mae_ev",
             "Mean energy MAE, eV",
-            "energy_mae_comparison.png",
-            "energy_mae_comparison_plot",
+            "Final energy MAE",
         ),
         (
             "force_mae_ev_per_ang",
             "Mean force MAE, eV/Å",
-            "force_mae_comparison.png",
-            "force_mae_comparison_plot",
+            "Final force MAE",
+        ),
         ),
     ):
         if cross_validation:
@@ -539,7 +559,6 @@ def _save_mae_plot(
             transfer_value,
         ]
         errors = [0.0, 0.0, transfer_error]
-        fig, ax = plt.subplots()
         bars = ax.bar(
             categories,
             values,
@@ -548,13 +567,14 @@ def _save_mae_plot(
             color=colors,
         )
         ax.bar_label(bars, fmt="%.4f", padding=3)
-        ax.set(ylabel=ylabel, title="Multi-fidelity transfer learning")
+        ax.set(ylabel=ylabel, title=title)
         ax.grid(axis="y", alpha=0.3)
-        fig.tight_layout()
-        fig.savefig(run_dir / filename, dpi=150)
-        plt.close(fig)
-        plots[artifact_key] = filename
-    return plots
+    fig.suptitle("Multi-fidelity transfer learning")
+    fig.tight_layout()
+    filename = "final_metrics_comparison.png"
+    fig.savefig(run_dir / filename, dpi=150)
+    plt.close(fig)
+    return filename
 
 
 def _aggregate_fold_metrics(
@@ -1115,11 +1135,12 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     "selection_plot"
                 ] = fold_selection_plots[model_key]
 
-            mae_plots = _save_mae_plot(
+            metrics_plot = _save_mae_plot(
                 run_dir,
                 base_metrics,
                 full_metrics,
                 transfer_cv["aggregate_test_metrics"],
+                transfer_cv["combined_validation"]["best_epoch"],
                 cross_validation=True,
             )
             result.update(
@@ -1180,7 +1201,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                         "sample_selection_plot": selection_plot,
                         **pca_plots,
                         "transfer_models": transfer_cv["artifacts"],
-                        **mae_plots,
+                        "final_metrics_comparison_plot": metrics_plot,
                     },
                 }
             )
@@ -1213,11 +1234,12 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         transfer_metrics["best_epoch"] = int(transfer_history["best_epoch"])
 
         loss_plot = _save_loss_plot(run_dir, transfer_history)
-        mae_plots = _save_mae_plot(
+        metrics_plot = _save_mae_plot(
             run_dir,
             base_metrics,
             full_metrics,
             transfer_metrics,
+            transfer_history["best_epoch"],
             cross_validation=False,
         )
         result.update(
@@ -1267,7 +1289,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     "sample_selection_plot": selection_plot,
                     **pca_plots,
                     "transfer_loss_plot": loss_plot,
-                    **mae_plots,
+                    "final_metrics_comparison_plot": metrics_plot,
                 },
             }
         )

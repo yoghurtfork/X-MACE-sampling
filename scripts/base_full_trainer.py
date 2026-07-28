@@ -59,24 +59,48 @@ def _save_scratch_mae_plot(
     run_dir: Path,
     base_metrics: dict[str, Any],
     full_metrics: dict[str, Any],
+    base_best_epoch: Any,
+    full_best_epoch: Any,
     *,
     cross_validation: bool,
-) -> dict[str, str]:
+) -> str:
     categories = ["Base model", "Full HF model"]
     colors = ["#377eb8", "#ff7f00"]
-    plots = {}
-    for metric, ylabel, filename, artifact_key in (
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
+
+    if cross_validation:
+        best_values = [base_best_epoch[0], full_best_epoch[0]]
+        best_errors = [
+            np.sqrt(base_best_epoch[1]),
+            np.sqrt(full_best_epoch[1]),
+        ]
+    else:
+        best_values = [base_best_epoch, full_best_epoch]
+        best_errors = None
+    best_bars = axes[0].bar(
+        categories,
+        best_values,
+        yerr=best_errors,
+        capsize=5 if cross_validation else 0,
+        color=colors,
+    )
+    axes[0].bar_label(best_bars, fmt="%.1f", padding=3)
+    axes[0].set(ylabel="Best epoch", title="Best training epoch")
+    axes[0].grid(axis="y", alpha=0.3)
+
+    for ax, (metric, ylabel, title) in zip(
+        axes[1:],
+        (
         (
             "energy_mae_ev",
             "Mean energy MAE, eV",
-            "scratch_energy_mae_comparison.png",
-            "energy_mae_comparison_plot",
+            "Final energy MAE",
         ),
         (
             "force_mae_ev_per_ang",
             "Mean force MAE, eV/Å",
-            "scratch_force_mae_comparison.png",
-            "force_mae_comparison_plot",
+            "Final force MAE",
+        ),
         ),
     ):
         if cross_validation:
@@ -91,7 +115,6 @@ def _save_scratch_mae_plot(
         else:
             values = [base_metrics[metric], full_metrics[metric]]
             errors = None
-        fig, ax = plt.subplots()
         bars = ax.bar(
             categories,
             values,
@@ -100,13 +123,14 @@ def _save_scratch_mae_plot(
             color=colors,
         )
         ax.bar_label(bars, fmt="%.4f", padding=3)
-        ax.set(ylabel=ylabel, title="Models trained from scratch")
+        ax.set(ylabel=ylabel, title=title)
         ax.grid(axis="y", alpha=0.3)
-        fig.tight_layout()
-        fig.savefig(run_dir / filename, dpi=150)
-        plt.close(fig)
-        plots[artifact_key] = filename
-    return plots
+    fig.suptitle("Models trained from scratch")
+    fig.tight_layout()
+    filename = "final_metrics_comparison.png"
+    fig.savefig(run_dir / filename, dpi=150)
+    plt.close(fig)
+    return filename
 
 
 def _train_model(
@@ -388,10 +412,12 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                         model_prefix=model_prefix,
                         descriptors=descriptors,
                     )
-            comparison_plots = _save_scratch_mae_plot(
+            comparison_plot = _save_scratch_mae_plot(
                 run_dir,
                 base_run["aggregate_test_metrics"],
                 full_run["aggregate_test_metrics"],
+                base_run["combined_validation"]["best_epoch"],
+                full_run["combined_validation"]["best_epoch"],
                 cross_validation=True,
             )
             result.update(
@@ -427,7 +453,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     "artifacts": {
                         "base_models": base_run["artifacts"],
                         "full_high_fidelity_models": full_run["artifacts"],
-                        **comparison_plots,
+                        "final_metrics_comparison_plot": comparison_plot,
                     },
                 }
             )
@@ -490,11 +516,13 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                         filename=f"{prefix}_validation_mae.png",
                     )
                 )
-            artifacts.update(
+            artifacts["final_metrics_comparison_plot"] = (
                 _save_scratch_mae_plot(
                     run_dir,
                     base_run["metrics"],
                     full_run["metrics"],
+                    base_run["history"]["best_epoch"],
+                    full_run["history"]["best_epoch"],
                     cross_validation=False,
                 )
             )
