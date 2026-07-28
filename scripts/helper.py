@@ -877,6 +877,8 @@ def _train_model(
     verbose: bool,
     energy_key: str,
     forces_key: str,
+    preset: str,
+    load_base: str | None,
     training: Any,
 ) -> dict[str, Any]:
     builder = builder_class(
@@ -893,7 +895,7 @@ def _train_model(
     )
     training.seed_everything(seed)
     model = initialise_autoencoder(
-        builder.get_metadata(), preset="default_ani", load_base="ani500k"
+        builder.get_metadata(), preset=preset, load_base=load_base
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     trainer = trainer_class(

@@ -90,6 +90,20 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         )
         patience = int(config.get("patience", PATIENCE))
         device = _validate_device(str(config.get("device", DEVICE)))
+        preset = config.get("preset", "default_ani")
+        if not isinstance(preset, str) or not preset:
+            raise ValueError("'preset' must be a non-empty string")
+        load_base_value = config.get("load_base", "ani500k")
+        if load_base_value is True:
+            load_base = "ani500k"
+        elif load_base_value is False or load_base_value is None:
+            load_base = None
+        elif isinstance(load_base_value, str) and load_base_value:
+            load_base = load_base_value
+        else:
+            raise ValueError(
+                "'load_base' must be a non-empty string, true, false, or null"
+            )
         if min(max_epochs, base_max_epochs, full_max_epochs, batch_size) < 1:
             raise ValueError("Epoch counts and batch size must be positive")
         if min(base_lr, full_lr) <= 0:
@@ -192,7 +206,9 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 builder.load(atoms, batch_size=batch_size, shuffle=False)
                 training.seed_everything(seed)
                 initial_models[name] = initialise_autoencoder(
-                    builder.get_metadata(), preset="default_ani", load_base="ani500k"
+                    builder.get_metadata(),
+                    preset=preset,
+                    load_base=load_base,
                 ).to(device)
             base_run = _train_k_fold_models(
                 initial_model=initial_models["base"],
@@ -258,6 +274,10 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     "warnings": warnings,
                     "seed": seed,
                     "device": str(device),
+                    "model_initialization": {
+                        "preset": preset,
+                        "load_base": load_base,
+                    },
                     "dataset_sizes": {
                         "base": len(base_atoms),
                         "transfer": len(full_atoms),
@@ -305,6 +325,8 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 "batch_size": batch_size,
                 "energy_key": energy_key,
                 "forces_key": forces_key,
+                "preset": preset,
+                "load_base": load_base,
                 "training": training,
                 **train_options,
             }
@@ -363,6 +385,10 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     "warnings": warnings,
                     "seed": seed,
                     "device": str(device),
+                    "model_initialization": {
+                        "preset": preset,
+                        "load_base": load_base,
+                    },
                     "dataset_sizes": {
                         "base": len(base_atoms),
                         "transfer": len(full_atoms),
