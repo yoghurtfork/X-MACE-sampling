@@ -24,10 +24,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.helper import (
-    BATCH_SIZE, DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEVICE, MAX_EPOCHS,
-    PATIENCE, R_MAX, SEED, TRANSFER_LR, VALIDATION_FRACTION,
-    _evaluate, _import_project_modules, _load_model, _next_run_dir, _path,
-    _read_atoms, _required, _save_epoch_mae_plot, _save_fold_selection_plot,
+    BASE_E0S, BATCH_SIZE, DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEVICE,
+    FULL_E0S, MAX_EPOCHS, PATIENCE, R_MAX, SEED, TRANSFER_LR,
+    VALIDATION_FRACTION, _e0s_from_config, _evaluate,
+    _import_project_modules, _load_model, _next_run_dir, _path, _read_atoms,
+    _required, _save_epoch_mae_plot, _save_fold_selection_plot,
     _save_loss_plot, _save_mae_plot, _save_pca_selection_plots,
     _save_selection_plot, _save_split_plot, _train_k_fold_models,
     _validate_device, _write_json, seed_everything,
@@ -98,6 +99,8 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         )
         patience = int(config.get("patience", PATIENCE))
         device = _validate_device(str(config.get("device", DEVICE)))
+        base_e0s = _e0s_from_config(config, "base_E0s", BASE_E0S)
+        full_e0s = _e0s_from_config(config, "full_E0s", FULL_E0S)
 
         if not cross_validation and not 0.0 < validation_fraction < 1.0:
             raise ValueError("'validation_fraction' must be between 0 and 1")
@@ -153,10 +156,17 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         transfer_train_atoms = [transfer_atoms[i] for i in train_indices]
         transfer_valid_atoms = [transfer_atoms[i] for i in valid_indices]
 
-        data_builder = AtomDataLoaderBuilder(
+        base_data_builder = AtomDataLoaderBuilder(
             cutoff=r_max,
             energy_key=str(config.get("energy_key", "REF_energy")),
             forces_key=str(config.get("forces_key", "REF_forces")),
+            E0s=base_e0s,
+        )
+        full_data_builder = AtomDataLoaderBuilder(
+            cutoff=r_max,
+            energy_key=str(config.get("energy_key", "REF_energy")),
+            forces_key=str(config.get("forces_key", "REF_forces")),
+            E0s=full_e0s,
         )
         trainer = Trainer(
             max_epochs=max_epochs,
@@ -195,10 +205,10 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 valid_indices,
                 descriptors,
             )
-        base_test_loader = data_builder.load(
+        base_test_loader = base_data_builder.load(
             base_test_atoms, batch_size=batch_size, shuffle=False
         )
-        transfer_test_loader = data_builder.load(
+        transfer_test_loader = full_data_builder.load(
             transfer_test_atoms, batch_size=batch_size, shuffle=False
         )
         base_model = _load_model(base_model_path, device)
@@ -209,7 +219,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         descriptor_name = str(_required(config, "descriptor"))
         descriptor_kwargs = dict(config.get("descriptor_kwargs", {}))
         if descriptor_name == "latent_space":
-            unshuffled_loader = data_builder.load(
+            unshuffled_loader = base_data_builder.load(
                 base_train_atoms, batch_size=batch_size, shuffle=False
             )
             descriptor_matrix = extract_latent_space(
@@ -340,6 +350,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 verbose=bool(config.get("verbose", True)),
                 energy_key=str(config.get("energy_key", "REF_energy")),
                 forces_key=str(config.get("forces_key", "REF_forces")),
+                e0s=full_e0s,
             )
             sampled_global_indices = train_indices[sampled_indices]
             fold_selection_plots = {}
@@ -388,6 +399,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     "warnings": warnings,
                     "seed": seed,
                     "device": str(device),
+                    "E0s": {"base": base_e0s, "full": full_e0s},
                     "dataset_sizes": {
                         "base": len(base_atoms),
                         "transfer": len(transfer_atoms),
@@ -443,10 +455,10 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
             _write_json(result_path, result)
             return result_path
 
-        transfer_train_loader = data_builder.load(
+        transfer_train_loader = full_data_builder.load(
             sampled_atoms, batch_size=batch_size, shuffle=True
         )
-        transfer_valid_loader = data_builder.load(
+        transfer_valid_loader = full_data_builder.load(
             transfer_valid_atoms, batch_size=batch_size, shuffle=False
         )
         transfer_model = NaiveStrategy().apply(base_model)
@@ -486,6 +498,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 "warnings": warnings,
                 "seed": seed,
                 "device": str(device),
+                "E0s": {"base": base_e0s, "full": full_e0s},
                 "dataset_sizes": {
                     "base": len(base_atoms),
                     "transfer": len(transfer_atoms),

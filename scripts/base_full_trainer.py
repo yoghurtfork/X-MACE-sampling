@@ -17,8 +17,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.helper import (
-    BATCH_SIZE, DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEVICE, MAX_EPOCHS,
-    PATIENCE, R_MAX, SCRATCH_LR, SEED, VALIDATION_FRACTION, _evaluate,
+    BASE_E0S, BATCH_SIZE, DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEVICE,
+    FULL_E0S, MAX_EPOCHS, PATIENCE, R_MAX, SCRATCH_LR, SEED,
+    VALIDATION_FRACTION, _e0s_from_config, _evaluate,
     _import_project_modules, _is_scratch_config, _next_run_dir, _path,
     _read_atoms, _required, _save_epoch_mae_plot, _save_fold_selection_plot,
     _save_loss_plot, _save_scratch_mae_plot, _train_k_fold_models,
@@ -89,6 +90,8 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         )
         patience = int(config.get("patience", PATIENCE))
         device = _validate_device(str(config.get("device", DEVICE)))
+        base_e0s = _e0s_from_config(config, "base_E0s", BASE_E0S)
+        full_e0s = _e0s_from_config(config, "full_E0s", FULL_E0S)
         preset = config.get("preset", "default_ani")
         if not isinstance(preset, str) or not preset:
             raise ValueError("'preset' must be a non-empty string")
@@ -195,11 +198,15 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 **train_options,
             }
             initial_models = {}
-            for name, atoms in (("base", base_atoms), ("full", full_atoms)):
+            for name, atoms, e0s in (
+                ("base", base_atoms, base_e0s),
+                ("full", full_atoms, full_e0s),
+            ):
                 builder = AtomDataLoaderBuilder(
                     cutoff=r_max,
                     energy_key=energy_key,
                     forces_key=forces_key,
+                    E0s=e0s,
                 )
                 builder.load(atoms, batch_size=batch_size, shuffle=False)
                 seed_everything(seed)
@@ -215,6 +222,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 model_prefix="base_model",
                 max_epochs=base_max_epochs,
                 learning_rate=base_lr,
+                e0s=base_e0s,
                 **common,
             )
             full_run = _train_k_fold_models(
@@ -224,6 +232,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 model_prefix="full_model",
                 max_epochs=full_max_epochs,
                 learning_rate=full_lr,
+                e0s=full_e0s,
                 **common,
             )
             for model_prefix, atoms, test_atoms, model_run in (
@@ -272,6 +281,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     "warnings": warnings,
                     "seed": seed,
                     "device": str(device),
+                    "E0s": {"base": base_e0s, "full": full_e0s},
                     "model_initialization": {
                         "preset": preset,
                         "load_base": load_base,
@@ -333,6 +343,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 test_atoms=base_test_atoms,
                 max_epochs=base_max_epochs,
                 learning_rate=base_lr,
+                e0s=base_e0s,
                 **common,
             )
             full_run = _train_model(
@@ -341,6 +352,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 test_atoms=full_test_atoms,
                 max_epochs=full_max_epochs,
                 learning_rate=full_lr,
+                e0s=full_e0s,
                 **common,
             )
             base_path = (run_dir / "base_model.pt").resolve()
@@ -382,6 +394,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     "warnings": warnings,
                     "seed": seed,
                     "device": str(device),
+                    "E0s": {"base": base_e0s, "full": full_e0s},
                     "model_initialization": {
                         "preset": preset,
                         "load_base": load_base,

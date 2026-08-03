@@ -34,6 +34,8 @@ SCRATCH_LR = 1.0e-3
 DEVICE = "cpu"
 VALIDATION_FRACTION = 0.1
 PATIENCE = 15
+BASE_E0S = {"C": -1032.083979117871, "H": -15.357929595328724}
+FULL_E0S = {"C": -1035.5115207879423, "H": -15.712048126191444}
 
 
 def seed_everything(TORCH_SEED):
@@ -81,6 +83,24 @@ def _required(config: dict[str, Any], key: str) -> Any:
     if key not in config:
         raise ValueError(f"Missing required configuration key: {key!r}")
     return config[key]
+
+
+def _e0s_from_config(
+    config: dict[str, Any], key: str, defaults: dict[str, float]
+) -> dict[str, float]:
+    """Return defaults overlaid with an optional JSON E0 mapping."""
+    overrides = config.get(key, {})
+    if not isinstance(overrides, dict):
+        raise ValueError(f"'{key}' must be a JSON object")
+
+    e0s = defaults.copy()
+    for element, energy in overrides.items():
+        if not isinstance(element, str) or not element:
+            raise ValueError(f"'{key}' element names must be non-empty strings")
+        if isinstance(energy, bool) or not isinstance(energy, (int, float)):
+            raise ValueError(f"'{key}' values must be JSON numbers")
+        e0s[element] = float(energy)
+    return e0s
 
 
 def _path(value: str, config_path: Path) -> Path:
@@ -608,6 +628,7 @@ def _train_k_fold_models(
     verbose: bool,
     energy_key: str,
     forces_key: str,
+    e0s: dict[str, float],
 ) -> dict[str, Any]:
     """Train, test, plot, and save a set of X-MACE K-fold models."""
     if not 2 <= k <= len(all_atoms):
@@ -619,6 +640,7 @@ def _train_k_fold_models(
         cutoff=r_max,
         energy_key=energy_key,
         forces_key=forces_key,
+        E0s=e0s,
     )
     all_loader = builder.load(
         all_atoms, batch_size=batch_size, shuffle=False
@@ -889,9 +911,13 @@ def _train_model(
     forces_key: str,
     preset: str,
     load_base: str | None,
+    e0s: dict[str, float],
 ) -> dict[str, Any]:
     builder = builder_class(
-        cutoff=r_max, energy_key=energy_key, forces_key=forces_key
+        cutoff=r_max,
+        energy_key=energy_key,
+        forces_key=forces_key,
+        E0s=e0s,
     )
     train_loader = builder.load(
         train_atoms, batch_size=batch_size, shuffle=True
