@@ -35,6 +35,7 @@ DEVICE = "cpu"
 VALIDATION_FRACTION = 0.1
 BASE_E0S = {"C": -1032.083979117871, "H": -15.357929595328724}
 FULL_E0S = {"C": -1035.5115207879423, "H": -15.712048126191444}
+STATE_LABELS = ("S0", "S1", "S2")
 
 
 def seed_everything(TORCH_SEED):
@@ -226,12 +227,35 @@ def _load_model(path: Path, device: torch.device) -> torch.nn.Module:
 
 def _evaluate(
     model: torch.nn.Module, loader: Any, tester: Any
-) -> dict[str, float]:
+) -> dict[str, Any]:
     model.eval()
     tester.run_test(model, loader)
     return {
         "energy_mae_ev": float(tester.get_energy_mae()),
         "force_mae_ev_per_ang": float(tester.get_force_mae()),
+        "energy_mae_by_state_ev": _maes_by_state(
+            tester.get_energy_mae_by_state(), "energy"
+        ),
+        "force_mae_by_state_ev_per_ang": _maes_by_state(
+            tester.get_force_mae_by_state(), "force"
+        ),
+    }
+
+
+def _maes_by_state(values: Any, metric_name: str) -> dict[str, float]:
+    """Label the three X-MACE per-state MAEs as S0, S1, and S2."""
+    if isinstance(values, torch.Tensor):
+        values = values.detach().cpu().numpy()
+    if isinstance(values, dict):
+        values = list(values.values())
+    values = np.asarray(values, dtype=float).reshape(-1)
+    if len(values) != len(STATE_LABELS):
+        raise ValueError(
+            f"Tester returned {len(values)} {metric_name} MAEs; expected "
+            f"{len(STATE_LABELS)} for S0, S1, and S2"
+        )
+    return {
+        state: float(value) for state, value in zip(STATE_LABELS, values)
     }
 
 
@@ -571,15 +595,15 @@ def _save_pca_selection_plots(
 
 def _save_mae_plot(
     run_dir: Path,
-    base_metrics: dict[str, float],
-    full_metrics: dict[str, float],
+    base_metrics: dict[str, Any],
+    full_metrics: dict[str, Any],
     transfer_metrics: dict[str, Any],
     transfer_best_epoch: Any,
     *,
     cross_validation: bool,
 ) -> str:
     categories = ["Base model", "Full HF model", "Transfer model"]
-    colors = ["#377eb8", "#ff7f00", "#fdbf6f"]
+    state_colors = ["#377eb8", "#ff7f00", "#4daf4a"]
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
 
     if cross_validation:
@@ -593,7 +617,7 @@ def _save_mae_plot(
         [best_epoch_value],
         yerr=[best_epoch_error] if cross_validation else None,
         capsize=5 if cross_validation else 0,
-        color=[colors[2]],
+        color="#fdbf6f",
     )
     axes[0].bar_label(best_bars, fmt="%.1f", padding=3)
     axes[0].set(ylabel="Best epoch", title="Best training epoch")
@@ -602,40 +626,26 @@ def _save_mae_plot(
     for ax, (metric, ylabel, title) in zip(
         axes[1:],
         (
-        (
-            "energy_mae_ev",
-            "Mean energy MAE, eV",
-            "Final energy MAE",
-        ),
-        (
-            "force_mae_ev_per_ang",
-            "Mean force MAE, eV/Å",
-            "Final force MAE",
-        ),
+            (
+                "energy_mae_by_state_ev",
+                "Energy MAE, eV",
+                "Final energy MAE by state",
+            ),
+            (
+                "force_mae_by_state_ev_per_ang",
+                "Force MAE, eV/Å",
+                "Final force MAE by state",
+            ),
         ),
     ):
-        if cross_validation:
-            transfer_value = transfer_metrics[metric]["mean"]
-            transfer_error = np.sqrt(
-                transfer_metrics[metric]["variance"]
-            )
-        else:
-            transfer_value = transfer_metrics[metric]
-            transfer_error = 0.0
-        values = [
-            base_metrics[metric],
-            full_metrics[metric],
-            transfer_value,
-        ]
-        errors = [0.0, 0.0, transfer_error]
-        bars = ax.bar(
+        _plot_state_mae_bars(
+            ax,
             categories,
-            values,
-            yerr=errors if cross_validation else None,
-            capsize=5 if cross_validation else 0,
-            color=colors,
+            (base_metrics, full_metrics, transfer_metrics),
+            metric,
+            cross_validation=cross_validation,
+            colors=state_colors,
         )
-        ax.bar_label(bars, fmt="%.4f", padding=3)
         ax.set(ylabel=ylabel, title=title)
         ax.grid(axis="y", alpha=0.3)
     fig.suptitle("Multi-fidelity transfer learning")
@@ -646,9 +656,47 @@ def _save_mae_plot(
     return filename
 
 
+def _plot_state_mae_bars(
+    ax: Any,
+    categories: list[str],
+    metrics_by_model: tuple[dict[str, Any], ...],
+    metric: str,
+    *,
+    cross_validation: bool,
+    colors: list[str],
+) -> None:
+    """Draw grouped S0/S1/S2 MAE bars for the supplied models."""
+    positions = np.arange(len(categories), dtype=float)
+    width = 0.24
+    offsets = (np.arange(len(STATE_LABELS)) - 1) * width
+    for offset, state, color in zip(offsets, STATE_LABELS, colors):
+        values = []
+        errors = []
+        for model_metrics in metrics_by_model:
+            value = model_metrics[metric][state]
+            if cross_validation and isinstance(value, dict):
+                values.append(value["mean"])
+                errors.append(np.sqrt(value["variance"]))
+            else:
+                values.append(value)
+                errors.append(0.0)
+        bars = ax.bar(
+            positions + offset,
+            values,
+            width,
+            yerr=errors if cross_validation else None,
+            capsize=4 if cross_validation else 0,
+            color=color,
+            label=state,
+        )
+        ax.bar_label(bars, fmt="%.4f", padding=3, fontsize=7)
+    ax.set_xticks(positions, categories)
+    ax.legend(title="State", fontsize=8)
+
+
 def _aggregate_fold_metrics(
     fold_results: dict[str, dict[str, Any]]
-) -> dict[str, dict[str, float]]:
+) -> dict[str, Any]:
     aggregate = {}
     for metric in ("energy_mae_ev", "force_mae_ev_per_ang"):
         values = np.asarray(
@@ -659,6 +707,23 @@ def _aggregate_fold_metrics(
             "mean": float(np.mean(values)),
             "variance": float(np.var(values)),
         }
+    for metric in (
+        "energy_mae_by_state_ev",
+        "force_mae_by_state_ev_per_ang",
+    ):
+        aggregate[metric] = {}
+        for state in STATE_LABELS:
+            values = np.asarray(
+                [
+                    fold["metrics"][metric][state]
+                    for fold in fold_results.values()
+                ],
+                dtype=float,
+            )
+            aggregate[metric][state] = {
+                "mean": float(np.mean(values)),
+                "variance": float(np.var(values)),
+            }
     return aggregate
 
 
@@ -871,7 +936,7 @@ def _save_scratch_mae_plot(
     cross_validation: bool,
 ) -> str:
     categories = ["Base model", "Full HF model"]
-    colors = ["#377eb8", "#ff7f00"]
+    state_colors = ["#377eb8", "#ff7f00", "#4daf4a"]
     fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
 
     if cross_validation:
@@ -888,7 +953,7 @@ def _save_scratch_mae_plot(
         best_values,
         yerr=best_errors,
         capsize=5 if cross_validation else 0,
-        color=colors,
+        color=["#377eb8", "#ff7f00"],
     )
     axes[0].bar_label(best_bars, fmt="%.1f", padding=3)
     axes[0].set(ylabel="Best epoch", title="Best training epoch")
@@ -897,38 +962,26 @@ def _save_scratch_mae_plot(
     for ax, (metric, ylabel, title) in zip(
         axes[1:],
         (
-        (
-            "energy_mae_ev",
-            "Mean energy MAE, eV",
-            "Final energy MAE",
-        ),
-        (
-            "force_mae_ev_per_ang",
-            "Mean force MAE, eV/Å",
-            "Final force MAE",
-        ),
+            (
+                "energy_mae_by_state_ev",
+                "Energy MAE, eV",
+                "Final energy MAE by state",
+            ),
+            (
+                "force_mae_by_state_ev_per_ang",
+                "Force MAE, eV/Å",
+                "Final force MAE by state",
+            ),
         ),
     ):
-        if cross_validation:
-            values = [
-                base_metrics[metric]["mean"],
-                full_metrics[metric]["mean"],
-            ]
-            errors = [
-                np.sqrt(base_metrics[metric]["variance"]),
-                np.sqrt(full_metrics[metric]["variance"]),
-            ]
-        else:
-            values = [base_metrics[metric], full_metrics[metric]]
-            errors = None
-        bars = ax.bar(
+        _plot_state_mae_bars(
+            ax,
             categories,
-            values,
-            yerr=errors,
-            capsize=5 if cross_validation else 0,
-            color=colors,
+            (base_metrics, full_metrics),
+            metric,
+            cross_validation=cross_validation,
+            colors=state_colors,
         )
-        ax.bar_label(bars, fmt="%.4f", padding=3)
         ax.set(ylabel=ylabel, title=title)
         ax.grid(axis="y", alpha=0.3)
     fig.suptitle("Models trained from scratch")
