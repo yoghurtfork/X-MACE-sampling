@@ -25,13 +25,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts.helper import (
     BASE_E0S, BATCH_SIZE, DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEVICE,
-    FULL_E0S, MAX_EPOCHS, PATIENCE, R_MAX, SEED, TRANSFER_LR,
-    VALIDATION_FRACTION, _e0s_from_config, _evaluate,
+    FULL_E0S, MAX_EPOCHS, R_MAX, SEED, TRANSFER_LR, VALIDATION_FRACTION,
+    _e0s_from_config, _evaluate,
     _import_project_modules, _load_model, _next_run_dir, _path, _read_atoms,
     _required, _save_epoch_mae_plot, _save_fold_selection_plot,
     _save_loss_plot, _save_mae_plot, _save_pca_selection_plots,
     _save_selection_plot, _save_split_plot, _train_k_fold_models,
-    _validate_device, _write_json, seed_everything,
+    _trainer_options_from_config, _validate_device, _write_json,
+    seed_everything,
 )
 
 
@@ -97,10 +98,10 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         validation_fraction = float(
             config.get("validation_fraction", VALIDATION_FRACTION)
         )
-        patience = int(config.get("patience", PATIENCE))
         device = _validate_device(str(config.get("device", DEVICE)))
         base_e0s = _e0s_from_config(config, "base_E0s", BASE_E0S)
         full_e0s = _e0s_from_config(config, "full_E0s", FULL_E0S)
+        trainer_options = _trainer_options_from_config(config)
 
         if not cross_validation and not 0.0 < validation_fraction < 1.0:
             raise ValueError("'validation_fraction' must be between 0 and 1")
@@ -170,11 +171,8 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         )
         trainer = Trainer(
             max_epochs=max_epochs,
-            early_stopping=bool(config.get("early_stopping", True)),
-            patience=patience,
-            restore_best=bool(config.get("restore_best", True)),
             device=device,
-            verbose=bool(config.get("verbose", True)),
+            **trainer_options,
         )
         tester = Tester(device=device)
         loss_kwargs = {
@@ -342,12 +340,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 batch_size=batch_size,
                 max_epochs=max_epochs,
                 learning_rate=transfer_lr,
-                early_stopping=bool(
-                    config.get("early_stopping", True)
-                ),
-                patience=patience,
-                restore_best=bool(config.get("restore_best", True)),
-                verbose=bool(config.get("verbose", True)),
+                trainer_options=trainer_options,
                 energy_key=str(config.get("energy_key", "REF_energy")),
                 forces_key=str(config.get("forces_key", "REF_forces")),
                 e0s=full_e0s,
@@ -400,6 +393,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     "seed": seed,
                     "device": str(device),
                     "E0s": {"base": base_e0s, "full": full_e0s},
+                    "trainer_options": trainer_options,
                     "dataset_sizes": {
                         "base": len(base_atoms),
                         "transfer": len(transfer_atoms),
@@ -499,6 +493,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 "seed": seed,
                 "device": str(device),
                 "E0s": {"base": base_e0s, "full": full_e0s},
+                "trainer_options": trainer_options,
                 "dataset_sizes": {
                     "base": len(base_atoms),
                     "transfer": len(transfer_atoms),

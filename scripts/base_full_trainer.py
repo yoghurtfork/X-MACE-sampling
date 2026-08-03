@@ -18,12 +18,13 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts.helper import (
     BASE_E0S, BATCH_SIZE, DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEVICE,
-    FULL_E0S, MAX_EPOCHS, PATIENCE, R_MAX, SCRATCH_LR, SEED,
-    VALIDATION_FRACTION, _e0s_from_config, _evaluate,
+    FULL_E0S, MAX_EPOCHS, R_MAX, SCRATCH_LR, SEED, VALIDATION_FRACTION,
+    _e0s_from_config, _evaluate,
     _import_project_modules, _is_scratch_config, _next_run_dir, _path,
     _read_atoms, _required, _save_epoch_mae_plot, _save_fold_selection_plot,
     _save_loss_plot, _save_scratch_mae_plot, _train_k_fold_models,
-    _train_model, _validate_device, _write_json, seed_everything,
+    _train_model, _trainer_options_from_config, _validate_device,
+    _write_json, seed_everything,
 )
 
 
@@ -88,10 +89,10 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         validation_fraction = float(
             config.get("validation_fraction", VALIDATION_FRACTION)
         )
-        patience = int(config.get("patience", PATIENCE))
         device = _validate_device(str(config.get("device", DEVICE)))
         base_e0s = _e0s_from_config(config, "base_E0s", BASE_E0S)
         full_e0s = _e0s_from_config(config, "full_E0s", FULL_E0S)
+        trainer_options = _trainer_options_from_config(config)
         preset = config.get("preset", "default_ani")
         if not isinstance(preset, str) or not preset:
             raise ValueError("'preset' must be a non-empty string")
@@ -174,13 +175,6 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         ).to(device)
         energy_key = str(config.get("energy_key", "REF_energy"))
         forces_key = str(config.get("forces_key", "REF_forces"))
-        train_options = {
-            "early_stopping": bool(config.get("early_stopping", True)),
-            "patience": patience,
-            "restore_best": bool(config.get("restore_best", True)),
-            "verbose": bool(config.get("verbose", True)),
-        }
-
         if cross_validation:
             common = {
                 "run_dir": run_dir,
@@ -195,7 +189,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 "batch_size": batch_size,
                 "energy_key": energy_key,
                 "forces_key": forces_key,
-                **train_options,
+                "trainer_options": trainer_options,
             }
             initial_models = {}
             for name, atoms, e0s in (
@@ -282,6 +276,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     "seed": seed,
                     "device": str(device),
                     "E0s": {"base": base_e0s, "full": full_e0s},
+                    "trainer_options": trainer_options,
                     "model_initialization": {
                         "preset": preset,
                         "load_base": load_base,
@@ -335,7 +330,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 "forces_key": forces_key,
                 "preset": preset,
                 "load_base": load_base,
-                **train_options,
+                "trainer_options": trainer_options,
             }
             base_run = _train_model(
                 train_atoms=[base_atoms[i] for i in train_indices],
@@ -395,6 +390,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     "seed": seed,
                     "device": str(device),
                     "E0s": {"base": base_e0s, "full": full_e0s},
+                    "trainer_options": trainer_options,
                     "model_initialization": {
                         "preset": preset,
                         "load_base": load_base,

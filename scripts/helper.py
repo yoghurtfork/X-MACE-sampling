@@ -33,7 +33,6 @@ TRANSFER_LR = 5.0e-4
 SCRATCH_LR = 1.0e-3
 DEVICE = "cpu"
 VALIDATION_FRACTION = 0.1
-PATIENCE = 15
 BASE_E0S = {"C": -1032.083979117871, "H": -15.357929595328724}
 FULL_E0S = {"C": -1035.5115207879423, "H": -15.712048126191444}
 
@@ -101,6 +100,65 @@ def _e0s_from_config(
             raise ValueError(f"'{key}' values must be JSON numbers")
         e0s[element] = float(energy)
     return e0s
+
+
+def _trainer_options_from_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Extract validated X-MACE Trainer options from a run configuration."""
+    options: dict[str, Any] = {}
+    for key, default in (
+        ("early_stopping", True),
+        ("restore_best", True),
+        ("verbose", True),
+    ):
+        value = config.get(key, default)
+        if not isinstance(value, bool):
+            raise ValueError(f"'{key}' must be a JSON boolean")
+        options[key] = value
+
+    for key, minimum, maximum, allow_minimum in (
+        ("optimiser_lr", 0.0, None, False),
+        ("optimiser_weight_decay", 0.0, None, True),
+        ("max_grad_norm", 0.0, None, False),
+        ("scheduler_lr_factor", 0.0, 1.0, False),
+        ("ema_decay", 0.0, 1.0, True),
+    ):
+        if key not in config:
+            continue
+        value = config[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"'{key}' must be a JSON number")
+        value = float(value)
+        below_minimum = value < minimum or (
+            value == minimum and not allow_minimum
+        )
+        if below_minimum or (maximum is not None and value > maximum):
+            if maximum is None:
+                if allow_minimum:
+                    raise ValueError(f"'{key}' must be non-negative")
+                raise ValueError(f"'{key}' must be positive")
+            lower_bound = "at least 0" if allow_minimum else "greater than 0"
+            raise ValueError(
+                f"'{key}' must be {lower_bound} and at most {maximum}"
+            )
+        options[key] = value
+
+    if "scheduler_patience" in config:
+        value = config["scheduler_patience"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError("'scheduler_patience' must be a positive JSON integer")
+        options["scheduler_patience"] = value
+
+    patience_key = (
+        "stopping_patience"
+        if "stopping_patience" in config
+        else "patience" if "patience" in config else None
+    )
+    if patience_key is not None:
+        value = config[patience_key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"'{patience_key}' must be a positive JSON integer")
+        options["stopping_patience"] = value
+    return options
 
 
 def _path(value: str, config_path: Path) -> Path:
@@ -622,10 +680,7 @@ def _train_k_fold_models(
     batch_size: int,
     max_epochs: int,
     learning_rate: float,
-    early_stopping: bool,
-    patience: int,
-    restore_best: bool,
-    verbose: bool,
+    trainer_options: dict[str, Any],
     energy_key: str,
     forces_key: str,
     e0s: dict[str, float],
@@ -650,11 +705,8 @@ def _train_k_fold_models(
     )
     trainer = trainer_class(
         max_epochs=max_epochs,
-        early_stopping=early_stopping,
-        patience=patience,
-        restore_best=restore_best,
         device=device,
-        verbose=verbose,
+        **trainer_options,
     )
     optimizer = torch.optim.Adam(
         initial_model.parameters(), lr=learning_rate
@@ -903,10 +955,7 @@ def _train_model(
     batch_size: int,
     max_epochs: int,
     learning_rate: float,
-    early_stopping: bool,
-    patience: int,
-    restore_best: bool,
-    verbose: bool,
+    trainer_options: dict[str, Any],
     energy_key: str,
     forces_key: str,
     preset: str,
@@ -935,11 +984,8 @@ def _train_model(
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     trainer = trainer_class(
         max_epochs=max_epochs,
-        early_stopping=early_stopping,
-        patience=patience,
-        restore_best=restore_best,
         device=device,
-        verbose=verbose,
+        **trainer_options,
     )
     started_at = time.time()
     model, history = trainer.train_model(
