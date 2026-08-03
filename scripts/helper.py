@@ -19,6 +19,8 @@ from sklearn.decomposition import PCA
 from sklearn.model_selection import KFold
 from sklearn.preprocessing import StandardScaler
 
+torch.set_default_dtype(torch.float32)
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
