@@ -15,14 +15,17 @@ from scripts import base_full_trainer, tester
 from scripts.helper import DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR
 
 
-def _read_transfer_learning(config_path: Path) -> bool:
+def _read_job_options(config_path: Path) -> tuple[bool, bool]:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     if not isinstance(config, dict):
         raise ValueError("The top-level JSON value must be an object")
+    ignore = config.get("ignore", False)
+    if not isinstance(ignore, bool):
+        raise ValueError("'ignore' must be a JSON boolean")
     transfer_learning = config.get("transfer_learning", True)
     if not isinstance(transfer_learning, bool):
         raise ValueError("'transfer_learning' must be a JSON boolean")
-    return transfer_learning
+    return ignore, transfer_learning
 
 
 def main() -> int:
@@ -51,7 +54,10 @@ def main() -> int:
     failed = 0
     for config_path in config_paths:
         try:
-            transfer_learning = _read_transfer_learning(config_path)
+            ignore, transfer_learning = _read_job_options(config_path)
+            if ignore:
+                print(f"\nSkipping {config_path.name} ('ignore' is true)")
+                continue
             if transfer_learning:
                 runner = tester.run_config
                 destination = "tester.py"
