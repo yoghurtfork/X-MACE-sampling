@@ -123,7 +123,6 @@ def _trainer_options_from_config(config: dict[str, Any]) -> dict[str, Any]:
         ("optimiser_weight_decay", 0.0, None, True),
         ("max_grad_norm", 0.0, None, False),
         ("scheduler_lr_factor", 0.0, 1.0, False),
-        ("ema_decay", 0.0, 1.0, True),
     ):
         if key not in config:
             continue
@@ -134,21 +133,33 @@ def _trainer_options_from_config(config: dict[str, Any]) -> dict[str, Any]:
         below_minimum = value < minimum or (
             value == minimum and not allow_minimum
         )
-        if below_minimum or (maximum is not None and value > maximum):
+        above_maximum = maximum is not None and value >= maximum
+        if below_minimum or above_maximum:
             if maximum is None:
                 if allow_minimum:
                     raise ValueError(f"'{key}' must be non-negative")
                 raise ValueError(f"'{key}' must be positive")
             lower_bound = "at least 0" if allow_minimum else "greater than 0"
             raise ValueError(
-                f"'{key}' must be {lower_bound} and at most {maximum}"
+                f"'{key}' must be {lower_bound} and less than {maximum}"
             )
         options[key] = value
 
+    if "ema_decay" in config:
+        value = config["ema_decay"]
+        if value is None:
+            options["ema_decay"] = None
+        elif isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("'ema_decay' must be a JSON number or null")
+        elif not 0.0 < float(value) < 1.0:
+            raise ValueError("'ema_decay' must be between 0 and 1, or null")
+        else:
+            options["ema_decay"] = float(value)
+
     if "scheduler_patience" in config:
         value = config["scheduler_patience"]
-        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-            raise ValueError("'scheduler_patience' must be a positive JSON integer")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError("'scheduler_patience' must be a non-negative JSON integer")
         options["scheduler_patience"] = value
 
     patience_key = (
@@ -162,6 +173,13 @@ def _trainer_options_from_config(config: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"'{patience_key}' must be a positive JSON integer")
         options["stopping_patience"] = value
     return options
+
+
+def _trainer_options_for_learning_rate(
+    trainer_options: dict[str, Any], learning_rate: float
+) -> dict[str, Any]:
+    """Set the effective per-model learning rate for X-MACE's optimizer."""
+    return {**trainer_options, "optimiser_lr": learning_rate}
 
 
 def _path(value: str, config_path: Path) -> Path:
@@ -790,16 +808,15 @@ def _train_k_fold_models(
             shuffle=False,
         )
         fold_model = deepcopy(initial_model).to(device)
-        optimizer = torch.optim.Adam(
-            fold_model.parameters(), lr=learning_rate
-        )
         trainer = trainer_class(
             max_epochs=max_epochs,
             device=device,
-            **trainer_options,
+            **_trainer_options_for_learning_rate(
+                trainer_options, learning_rate
+            ),
         )
         fold_model, history = trainer.train_model(
-            fold_model, train_loader, valid_loader, optimizer, loss_fn
+            fold_model, train_loader, valid_loader, loss_fn
         )
         metrics = _evaluate(fold_model, test_loader, tester)
         metrics["best_epoch"] = int(history["best_epoch"])
@@ -1077,15 +1094,14 @@ def _train_model(
     model = initialise_autoencoder(
         builder.get_metadata(), preset=preset, load_base=load_base
     ).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     trainer = trainer_class(
         max_epochs=max_epochs,
         device=device,
-        **trainer_options,
+        **_trainer_options_for_learning_rate(trainer_options, learning_rate),
     )
     started_at = time.time()
     model, history = trainer.train_model(
-        model, train_loader, valid_loader, optimizer, loss_fn
+        model, train_loader, valid_loader, loss_fn
     )
     metrics = _evaluate(model, test_loader, tester)
     metrics["best_epoch"] = int(history["best_epoch"])

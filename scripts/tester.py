@@ -31,8 +31,8 @@ from scripts.helper import (
     _required, _save_epoch_mae_plot, _save_fold_selection_plot,
     _save_loss_plot, _save_mae_plot, _save_pca_selection_plots,
     _save_selection_plot, _save_split_plot, _train_k_fold_models,
-    _trainer_options_from_config, _validate_device, _write_json,
-    seed_everything,
+    _trainer_options_for_learning_rate, _trainer_options_from_config,
+    _validate_device, _write_json, seed_everything,
 )
 
 
@@ -169,10 +169,13 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
             forces_key=str(config.get("forces_key", "REF_forces")),
             E0s=full_e0s,
         )
+        transfer_trainer_options = _trainer_options_for_learning_rate(
+            trainer_options, transfer_lr
+        )
         trainer = Trainer(
             max_epochs=max_epochs,
             device=device,
-            **trainer_options,
+            **transfer_trainer_options,
         )
         tester = Tester(device=device)
         loss_kwargs = {
@@ -494,16 +497,12 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
             transfer_valid_atoms, batch_size=batch_size, shuffle=False
         )
         transfer_model = NaiveStrategy().apply(base_model)
-        transfer_optimizer = torch.optim.Adam(
-            transfer_model.parameters(), lr=transfer_lr
-        )
         seed_everything(seed)
         started_at = time.time()
         transfer_model, transfer_history = trainer.train_model(
             transfer_model,
             transfer_train_loader,
             transfer_valid_loader,
-            transfer_optimizer,
             loss_fn,
         )
         training_seconds = time.time() - started_at
