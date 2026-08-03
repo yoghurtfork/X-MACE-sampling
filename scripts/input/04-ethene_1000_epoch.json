@@ -9,7 +9,7 @@
   "base_n_geometries": 3731,
   "transfer_n_geometries": 3731,
   "seed": 42,
-  "validation_fraction": 0.1,
+  "validation_fraction": 0.2,
   "device": "cuda",
   "batch_size": 10,
   "r_max": 5.0,
