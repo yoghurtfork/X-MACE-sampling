@@ -209,6 +209,41 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     preset=preset,
                     load_base=load_base,
                 ).to(device)
+
+            partial_runs: dict[str, dict[str, Any]] = {}
+
+            def checkpoint_fold(
+                model_key: str, snapshot: dict[str, Any]
+            ) -> None:
+                partial_runs[model_key] = snapshot
+                progress = {
+                    key: {
+                        "completed_folds": value["completed_folds"],
+                        "total_folds": value["total_folds"],
+                    }
+                    for key, value in partial_runs.items()
+                }
+                result.update(
+                    {
+                        "status": "running",
+                        "cross_validation_progress": progress,
+                        "metrics": {
+                            key: value["aggregate_test_metrics"]
+                            for key, value in partial_runs.items()
+                        },
+                        "cross_validation_training": partial_runs,
+                        "models": {
+                            key: value["model_paths"]
+                            for key, value in partial_runs.items()
+                        },
+                        "artifacts": {
+                            key: value["artifacts"]
+                            for key, value in partial_runs.items()
+                        },
+                    }
+                )
+                _write_json(result_path, result)
+
             base_run = _train_k_fold_models(
                 initial_model=initial_models["base"],
                 all_atoms=base_atoms,
@@ -217,6 +252,9 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 max_epochs=base_max_epochs,
                 learning_rate=base_lr,
                 e0s=base_e0s,
+                on_fold_complete=lambda snapshot: checkpoint_fold(
+                    "base_models", snapshot
+                ),
                 **common,
             )
             full_run = _train_k_fold_models(
@@ -227,6 +265,9 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 max_epochs=full_max_epochs,
                 learning_rate=full_lr,
                 e0s=full_e0s,
+                on_fold_complete=lambda snapshot: checkpoint_fold(
+                    "full_high_fidelity_models", snapshot
+                ),
                 **common,
             )
             for model_prefix, atoms, test_atoms, model_run in (
@@ -296,6 +337,16 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     "cross_validation_training": {
                         "base_models": base_run,
                         "full_high_fidelity_models": full_run,
+                    },
+                    "cross_validation_progress": {
+                        "base_models": {
+                            "completed_folds": base_run["completed_folds"],
+                            "total_folds": base_run["total_folds"],
+                        },
+                        "full_high_fidelity_models": {
+                            "completed_folds": full_run["completed_folds"],
+                            "total_folds": full_run["total_folds"],
+                        },
                     },
                     "models": {
                         "base_models": base_run["model_paths"],
@@ -431,6 +482,10 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
 
         _write_json(result_path, result)
         return result_path
+    except KeyboardInterrupt:
+        result["status"] = "interrupted"
+        _write_json(result_path, result)
+        raise
     except Exception as exc:
         result.update(
             {

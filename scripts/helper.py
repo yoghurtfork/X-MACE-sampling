@@ -7,14 +7,16 @@ import os
 import random
 import sys
 import time
+from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import ase.io
 import matplotlib
 import numpy as np
 import torch
 from sklearn.decomposition import PCA
+from sklearn.model_selection import KFold
 from sklearn.preprocessing import StandardScaler
 
 matplotlib.use("Agg")
@@ -204,10 +206,12 @@ def _json_value(value: Any) -> Any:
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
-    path.write_text(
+    temporary_path = path.with_suffix(path.suffix + ".tmp")
+    temporary_path.write_text(
         json.dumps(value, indent=2, default=_json_value, allow_nan=False) + "\n",
         encoding="utf-8",
     )
+    temporary_path.replace(path)
 
 
 def _validate_device(name: str) -> torch.device:
@@ -749,6 +753,7 @@ def _train_k_fold_models(
     energy_key: str,
     forces_key: str,
     e0s: dict[str, float],
+    on_fold_complete: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Train, test, plot, and save a set of X-MACE K-fold models."""
     if not 2 <= k <= len(all_atoms):
@@ -762,56 +767,57 @@ def _train_k_fold_models(
         forces_key=forces_key,
         E0s=e0s,
     )
-    all_loader = builder.load(
-        all_atoms, batch_size=batch_size, shuffle=False
-    )
     test_loader = builder.load(
         test_atoms, batch_size=batch_size, shuffle=False
     )
-    trainer = trainer_class(
-        max_epochs=max_epochs,
-        device=device,
-        **trainer_options,
-    )
-    optimizer = torch.optim.Adam(
-        initial_model.parameters(), lr=learning_rate
-    )
     seed_everything(seed)
     started_at = time.time()
-    models, histories = trainer.train_k_fold_models(
-        initial_model,
-        all_loader,
-        optimizer,
-        loss_fn,
-        k=k,
-        seed=seed,
-    )
-    training_seconds = time.time() - started_at
-
-    fold_results = {}
-    artifacts = {}
-    model_paths = {}
-    for fold_number in range(1, k + 1):
-        model_key = f"model_{fold_number}"
-        fold_model = models[model_key].to(device)
-        metrics = _evaluate(fold_model, test_loader, tester)
-        metrics["best_epoch"] = int(
-            histories[model_key]["best_epoch"]
+    fold_results: dict[str, dict[str, Any]] = {}
+    artifacts: dict[str, dict[str, str]] = {}
+    model_paths: dict[str, str] = {}
+    splitter = KFold(n_splits=k, shuffle=True, random_state=seed)
+    for fold_number, (train_indices, valid_indices) in enumerate(
+        splitter.split(range(len(all_atoms))), start=1
+    ):
+        train_loader = builder.load(
+            [all_atoms[index] for index in train_indices],
+            batch_size=batch_size,
+            shuffle=True,
         )
+        valid_loader = builder.load(
+            [all_atoms[index] for index in valid_indices],
+            batch_size=batch_size,
+            shuffle=False,
+        )
+        fold_model = deepcopy(initial_model).to(device)
+        optimizer = torch.optim.Adam(
+            fold_model.parameters(), lr=learning_rate
+        )
+        trainer = trainer_class(
+            max_epochs=max_epochs,
+            device=device,
+            **trainer_options,
+        )
+        fold_model, history = trainer.train_model(
+            fold_model, train_loader, valid_loader, optimizer, loss_fn
+        )
+        metrics = _evaluate(fold_model, test_loader, tester)
+        metrics["best_epoch"] = int(history["best_epoch"])
         fold_model = fold_model.cpu()
+        model_key = f"model_{fold_number}"
         model_path = (
             run_dir / f"{model_prefix}_fold_{fold_number}.pt"
         ).resolve()
         torch.save(fold_model, model_path)
         loss_plot = _save_loss_plot(
             run_dir,
-            histories[model_key],
+            history,
             title=f"{model_prefix.replace('_', ' ').title()} fold {fold_number}",
             filename=f"{model_prefix}_fold_{fold_number}_loss.png",
         )
         mae_plot = _save_epoch_mae_plot(
             run_dir,
-            histories[model_key],
+            history,
             title=(
                 f"{model_prefix.replace('_', ' ').title()} "
                 f"fold {fold_number} validation MAE"
@@ -819,7 +825,7 @@ def _train_k_fold_models(
             filename=f"{model_prefix}_fold_{fold_number}_validation_mae.png",
         )
         fold_results[model_key] = {
-            "history": histories[model_key],
+            "history": history,
             "metrics": metrics,
             "model_path": str(model_path),
         }
@@ -828,14 +834,51 @@ def _train_k_fold_models(
             "loss_plot": loss_plot,
             "validation_mae_plot": mae_plot,
         }
+        snapshot = _cross_validation_snapshot(
+            fold_results,
+            artifacts,
+            model_paths,
+            total_folds=k,
+            started_at=started_at,
+        )
+        if on_fold_complete is not None:
+            on_fold_complete(snapshot)
 
+    return _cross_validation_snapshot(
+        fold_results,
+        artifacts,
+        model_paths,
+        total_folds=k,
+        started_at=started_at,
+    )
+
+
+def _cross_validation_snapshot(
+    fold_results: dict[str, dict[str, Any]],
+    artifacts: dict[str, dict[str, str]],
+    model_paths: dict[str, str],
+    *,
+    total_folds: int,
+    started_at: float,
+) -> dict[str, Any]:
+    best_epochs = np.asarray(
+        [fold["metrics"]["best_epoch"] for fold in fold_results.values()],
+        dtype=float,
+    )
     return {
         "folds": fold_results,
-        "combined_validation": histories["combined"],
+        "combined_validation": {
+            "best_epoch": [
+                float(np.mean(best_epochs)),
+                float(np.var(best_epochs)),
+            ]
+        },
         "aggregate_test_metrics": _aggregate_fold_metrics(fold_results),
-        "training_seconds": training_seconds,
+        "training_seconds": time.time() - started_at,
         "model_paths": model_paths,
         "artifacts": artifacts,
+        "completed_folds": len(fold_results),
+        "total_folds": total_folds,
     }
 
 

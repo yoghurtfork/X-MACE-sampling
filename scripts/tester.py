@@ -323,6 +323,37 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
 
         if cross_validation:
             transfer_initial_model = NaiveStrategy().apply(base_model)
+
+            def checkpoint_transfer_fold(snapshot: dict[str, Any]) -> None:
+                result.update(
+                    {
+                        "status": "running",
+                        "cross_validation_progress": {
+                            "transfer_models": {
+                                "completed_folds": snapshot["completed_folds"],
+                                "total_folds": snapshot["total_folds"],
+                            }
+                        },
+                        "metrics": {
+                            "base_model": base_metrics,
+                            "full_high_fidelity_model": full_metrics,
+                            "transfer_models": snapshot[
+                                "aggregate_test_metrics"
+                            ],
+                        },
+                        "cross_validation_training": {
+                            "transfer_models": snapshot
+                        },
+                        "models": {
+                            "transfer_models": snapshot["model_paths"]
+                        },
+                        "artifacts": {
+                            "transfer_models": snapshot["artifacts"]
+                        },
+                    }
+                )
+                _write_json(result_path, result)
+
             transfer_cv = _train_k_fold_models(
                 initial_model=transfer_initial_model,
                 all_atoms=sampled_atoms,
@@ -344,6 +375,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 energy_key=str(config.get("energy_key", "REF_energy")),
                 forces_key=str(config.get("forces_key", "REF_forces")),
                 e0s=full_e0s,
+                on_fold_complete=checkpoint_transfer_fold,
             )
             sampled_global_indices = train_indices[sampled_indices]
             fold_selection_plots = {}
@@ -433,6 +465,12 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                             "training_seconds": transfer_cv[
                                 "training_seconds"
                             ],
+                        }
+                    },
+                    "cross_validation_progress": {
+                        "transfer_models": {
+                            "completed_folds": transfer_cv["completed_folds"],
+                            "total_folds": transfer_cv["total_folds"],
                         }
                     },
                     "models": {
@@ -538,6 +576,10 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         )
         _write_json(result_path, result)
         return result_path
+    except KeyboardInterrupt:
+        result["status"] = "interrupted"
+        _write_json(result_path, result)
+        raise
     except Exception as exc:
         result.update(
             {
