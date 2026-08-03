@@ -2,7 +2,7 @@
   "ignore": false,
   "transfer_learning": false,
   "cross_validation": true,
-  "k": 3,
+  "k": 5,
   "base_xyz": "../../data/A02_propene_grid_static_CASSCF.xyz",
   "transfer_xyz": "../../data/A02_propene_grid_static_SA3-NEVPT2_22_molcas.xyz",
   "base_test_xyz": "../../data/A02_propene_offgrid_128_sobol_2e2o.xyz",
