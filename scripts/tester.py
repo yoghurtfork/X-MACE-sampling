@@ -30,7 +30,7 @@ from scripts.helper import (
     _read_atoms, _required, _save_epoch_mae_plot, _save_fold_selection_plot,
     _save_loss_plot, _save_mae_plot, _save_pca_selection_plots,
     _save_selection_plot, _save_split_plot, _train_k_fold_models,
-    _validate_device, _write_json,
+    _validate_device, _write_json, seed_everything,
 )
 
 
@@ -46,7 +46,6 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         initialise_autoencoder,
         descriptors,
         selectors,
-        training,
     ) = _import_project_modules()
 
     config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -105,7 +104,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         if max_epochs < 1 or batch_size < 1:
             raise ValueError("'max_epochs' and 'batch_size' must be positive")
 
-        training.seed_everything(seed)
+        seed_everything(seed)
 
         base_xyz = _path(_required(config, "base_xyz"), config_path)
         transfer_xyz = _path(_required(config, "transfer_xyz"), config_path)
@@ -279,7 +278,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 "'n_samples' must be between 1 and the training-pool size"
             )
         # Reset immediately before selection so it is independent of model loading.
-        training.seed_everything(seed)
+        seed_everything(seed)
         sampled_indices = np.asarray(
             selectors.get_selector(
                 selector_name,
@@ -341,7 +340,6 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 verbose=bool(config.get("verbose", True)),
                 energy_key=str(config.get("energy_key", "REF_energy")),
                 forces_key=str(config.get("forces_key", "REF_forces")),
-                training=training,
             )
             sampled_global_indices = train_indices[sampled_indices]
             fold_selection_plots = {}
@@ -455,7 +453,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         transfer_optimizer = torch.optim.Adam(
             transfer_model.parameters(), lr=transfer_lr
         )
-        training.seed_everything(seed)
+        seed_everything(seed)
         started_at = time.time()
         transfer_model, transfer_history = trainer.train_model(
             transfer_model,

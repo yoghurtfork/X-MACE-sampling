@@ -22,7 +22,7 @@ from scripts.helper import (
     _import_project_modules, _is_scratch_config, _next_run_dir, _path,
     _read_atoms, _required, _save_epoch_mae_plot, _save_fold_selection_plot,
     _save_loss_plot, _save_scratch_mae_plot, _train_k_fold_models,
-    _train_model, _validate_device, _write_json,
+    _train_model, _validate_device, _write_json, seed_everything,
 )
 
 
@@ -37,7 +37,6 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
         initialise_autoencoder,
         descriptors,
         _selectors,
-        training,
     ) = _import_project_modules()
 
     config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -193,7 +192,6 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 "batch_size": batch_size,
                 "energy_key": energy_key,
                 "forces_key": forces_key,
-                "training": training,
                 **train_options,
             }
             initial_models = {}
@@ -204,7 +202,7 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                     forces_key=forces_key,
                 )
                 builder.load(atoms, batch_size=batch_size, shuffle=False)
-                training.seed_everything(seed)
+                seed_everything(seed)
                 initial_models[name] = initialise_autoencoder(
                     builder.get_metadata(),
                     preset=preset,
@@ -327,7 +325,6 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
                 "forces_key": forces_key,
                 "preset": preset,
                 "load_base": load_base,
-                "training": training,
                 **train_options,
             }
             base_run = _train_model(

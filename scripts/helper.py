@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import random
 import sys
 import time
 from pathlib import Path
@@ -34,6 +36,18 @@ VALIDATION_FRACTION = 0.1
 PATIENCE = 15
 
 
+def seed_everything(TORCH_SEED):
+    random.seed(TORCH_SEED)
+    os.environ['PYTHONHASHSEED'] = str(TORCH_SEED)
+    np.random.seed(TORCH_SEED)
+    torch.manual_seed(TORCH_SEED)
+    torch.use_deterministic_algorithms(True)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.cuda.manual_seed(TORCH_SEED)
+    torch.cuda.manual_seed_all(TORCH_SEED)
+
+
 def _import_project_modules() -> tuple[Any, ...]:
     """Import local and X-MACE modules after making the project importable."""
     if str(PROJECT_ROOT) not in sys.path:
@@ -50,8 +64,6 @@ def _import_project_modules() -> tuple[Any, ...]:
 
     import sampling_methods.descriptors as descriptors
     import sampling_methods.selectors as selectors
-    import utils.training as training
-
     return (
         modules,
         AtomDataLoaderBuilder,
@@ -62,7 +74,6 @@ def _import_project_modules() -> tuple[Any, ...]:
         initialise_autoencoder,
         descriptors,
         selectors,
-        training,
     )
 
 
@@ -124,7 +135,7 @@ def _validate_device(name: str) -> torch.device:
     if name not in {"cpu", "cuda"}:
         raise ValueError("'device' must be either 'cpu' or 'cuda'")
     if name == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA was requested but is not available")
+        return torch.device("cpu")
     return torch.device(name)
 
 
@@ -597,7 +608,6 @@ def _train_k_fold_models(
     verbose: bool,
     energy_key: str,
     forces_key: str,
-    training: Any,
 ) -> dict[str, Any]:
     """Train, test, plot, and save a set of X-MACE K-fold models."""
     if not 2 <= k <= len(all_atoms):
@@ -627,7 +637,7 @@ def _train_k_fold_models(
     optimizer = torch.optim.Adam(
         initial_model.parameters(), lr=learning_rate
     )
-    training.seed_everything(seed)
+    seed_everything(seed)
     started_at = time.time()
     models, histories = trainer.train_k_fold_models(
         initial_model,
@@ -879,7 +889,6 @@ def _train_model(
     forces_key: str,
     preset: str,
     load_base: str | None,
-    training: Any,
 ) -> dict[str, Any]:
     builder = builder_class(
         cutoff=r_max, energy_key=energy_key, forces_key=forces_key
@@ -893,7 +902,7 @@ def _train_model(
     test_loader = builder.load(
         test_atoms, batch_size=batch_size, shuffle=False
     )
-    training.seed_everything(seed)
+    seed_everything(seed)
     model = initialise_autoencoder(
         builder.get_metadata(), preset=preset, load_base=load_base
     ).to(device)
