@@ -1,6 +1,7 @@
 {
   "ignore": false,
   "transfer_learning": false,
+  "run": "just_full",
   "cross_validation": true,
   "k": 5,
   "base_xyz": "../../data/A02_propene_grid_static_CASSCF.xyz",
