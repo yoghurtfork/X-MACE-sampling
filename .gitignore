@@ -219,3 +219,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local datasets
+data/*dynamic*
+data/azoflip_data/
+data/full_data/dynamic/
