@@ -1,8 +1,9 @@
 {
-  "ignore": false,
+  "ignore": true,
   "transfer_learning": false,
+  "run": "just_full",
   "cross_validation": true,
-  "k": 3,
+  "k": 5,
   "base_xyz": "../../data/A03_butene_grid_static_CASSCF.xyz",
   "transfer_xyz": "../../data/A03_butene_grid_static_SA3-NEVPT2_22_molcas.xyz",
   "base_test_xyz": "../../data/A03_butene_offgrid_128_sobol_2e2o.xyz",

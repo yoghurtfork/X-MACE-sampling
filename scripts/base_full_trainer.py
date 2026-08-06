@@ -28,7 +28,9 @@ from scripts.helper import (
 )
 
 
-def run_config(config_path: Path, output_dir: Path) -> Path:
+def run_config(
+    config_path: Path, output_dir: Path, run_dir: Path | None = None
+) -> Path:
     (
         modules,
         AtomDataLoaderBuilder,
@@ -49,7 +51,14 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
             "base_full_trainer.py requires 'transfer_learning': false"
         )
 
-    run_dir = _next_run_dir(output_dir)
+    if run_dir is None:
+        run_dir = _next_run_dir(output_dir)
+    else:
+        run_dir = run_dir.resolve()
+        if not run_dir.is_dir():
+            raise FileNotFoundError(
+                f"Preallocated run directory does not exist: {run_dir}"
+            )
     result_path = run_dir / "result.json"
     result: dict[str, Any] = {
         "status": "running",

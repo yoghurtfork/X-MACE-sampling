@@ -238,7 +238,7 @@ def _validate_device(name: str) -> torch.device:
     if name not in {"cpu", "cuda"}:
         raise ValueError("'device' must be either 'cpu' or 'cuda'")
     if name == "cuda" and not torch.cuda.is_available():
-        return torch.device("cpu")
+        raise RuntimeError("CUDA was requested but is not available")
     return torch.device(name)
 
 

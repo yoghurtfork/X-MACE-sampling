@@ -36,7 +36,9 @@ from scripts.helper import (
 )
 
 
-def run_config(config_path: Path, output_dir: Path) -> Path:
+def run_config(
+    config_path: Path, output_dir: Path, run_dir: Path | None = None
+) -> Path:
     """Execute one input configuration and return its result JSON path."""
     (
         modules,
@@ -62,7 +64,14 @@ def run_config(config_path: Path, output_dir: Path) -> Path:
             "use base_full_trainer.py when 'transfer_learning' is false"
         )
 
-    run_dir = _next_run_dir(output_dir)
+    if run_dir is None:
+        run_dir = _next_run_dir(output_dir)
+    else:
+        run_dir = run_dir.resolve()
+        if not run_dir.is_dir():
+            raise FileNotFoundError(
+                f"Preallocated run directory does not exist: {run_dir}"
+            )
     result_path = run_dir / "result.json"
     result: dict[str, Any] = {
         "status": "running",
