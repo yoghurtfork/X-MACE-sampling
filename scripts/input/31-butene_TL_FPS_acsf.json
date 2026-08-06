@@ -1,0 +1,52 @@
+{
+  "ignore": false,
+  "transfer_learning": true,
+  "cross_validation": true,
+  "k": 5,
+  "base_xyz": "../../data/A03_butene_grid_static_CASSCF_no_dihedral_extremes.xyz",
+  "transfer_xyz": "../../data/A03_butene_grid_static_SA3-NEVPT2_22_molcas_no_dihedral_extremes.xyz",
+  "base_test_xyz": "../../data/A03_butene_offgrid_128_sobol_2e2o_CASSCF_molcas.xyz",
+  "transfer_test_xyz": "../../data/A03_butene_offgrid_SA3-NEVPT2_22_molcas.xyz",
+  "base_model_path": "../../outputs/base_models/base_model_run_34_fold_2.pt",
+  "full_model_path": "../../outputs/full_models/full_model_all_3731_geom_NEVPT2_119_epoch_ani500k_cuda_run5bestfold.pt",
+  "base_n_geometries": 3649,
+  "transfer_n_geometries": 3649,
+  "descriptor": "acsf",
+  "descriptor_kwargs": {},
+  "pca": false,
+  "selector": "farthest_point_sampling",
+  "selector_kwargs": {"initialize": 0},
+  "n_samples": 100,
+  "seed": 42,
+  "device": "cuda",
+  "batch_size": 10,
+  "r_max": 5.0,
+  "max_epochs": 100,
+  "transfer_lr": 0.0005,
+  "base_E0s": {
+    "C": -1032.083979117871,
+    "H": -15.357929595328724
+  },
+  "full_E0s": {
+    "C": -1035.5115207879423,
+    "H": -15.712048126191444
+  },
+  "optimiser_weight_decay": 5e-07,
+  "max_grad_norm": 10.0,
+  "scheduler_lr_factor": 0.8,
+  "scheduler_patience": 50,
+  "ema_decay": 0.99,
+  "early_stopping": true,
+  "stopping_patience": 2048,
+  "restore_best": true,
+  "verbose": true,
+  "energy_key": "REF_energy",
+  "forces_key": "REF_forces",
+  "loss_kwargs": {
+    "energy_weight": 1.0,
+    "forces_weight": 1.0,
+    "dipoles_weight": 0.0,
+    "nacs_weight": 0.0,
+    "socs_weight": 0.0
+  }
+}
