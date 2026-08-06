@@ -1,5 +1,5 @@
 {
-  "ignore": false,
+  "ignore": true,
   "transfer_learning": false,
   "cross_validation": false,
   "base_xyz": "../../data/A01_ethene_grid_static_CASSCF.xyz",
