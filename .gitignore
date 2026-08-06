@@ -222,5 +222,8 @@ __marimo__/
 
 # Local datasets
 data/*dynamic*
-data/azoflip_data/
+# Keep the dataset ignored by default, but allow XYZ structures to be tracked.
+data/azoflip_data/**
+!data/azoflip_data/**/
+!data/azoflip_data/**/*.xyz
 data/full_data/dynamic/
