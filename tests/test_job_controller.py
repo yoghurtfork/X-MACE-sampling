@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from scripts import job_controller
 from scripts import single_trainer
+from scripts import helper
 
 
 class JobControllerTests(unittest.TestCase):
@@ -101,6 +102,10 @@ class JobControllerTests(unittest.TestCase):
 
 
 class SingleTrainerTests(unittest.TestCase):
+    class _Metadata:
+        atomic_numbers = [6]
+        atomic_energies = [-1.5]
+
     class _Loss:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
@@ -116,7 +121,7 @@ class SingleTrainerTests(unittest.TestCase):
             return atoms
 
         def get_metadata(self):
-            return {"metadata": "test"}
+            return SingleTrainerTests._Metadata()
 
     class _Model:
         def to(self, device):
@@ -167,6 +172,7 @@ class SingleTrainerTests(unittest.TestCase):
                 "training_seconds": 1.0,
                 "max_epochs": 12,
                 "learning_rate": 0.02,
+                "E0s": {"C": -1.5},
             }
             with (
                 patch.object(single_trainer, "_import_project_modules", return_value=self._modules()),
@@ -231,9 +237,92 @@ class SingleTrainerTests(unittest.TestCase):
             self.assertEqual(kwargs["k"], 2)
             self.assertEqual(kwargs["max_epochs"], 9)
             self.assertEqual(kwargs["learning_rate"], 0.03)
+            self.assertIsNone(kwargs["e0s"])
             result = json.loads(result_path.read_text(encoding="utf-8"))
+            self.assertEqual(result["E0s"], {"base": {"C": -1.5}})
             self.assertIn("base_models", result["models"])
             self.assertNotIn("full_high_fidelity_models", result["models"])
+
+
+class AutomaticE0Tests(unittest.TestCase):
+    class _Builder:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.load_calls = []
+            self.__class__.instances.append(self)
+
+        def load(self, atoms, **kwargs):
+            self.load_calls.append((list(atoms), kwargs))
+            return atoms
+
+        def get_metadata(self):
+            return type(
+                "Metadata", (), {"atomic_numbers": [1], "atomic_energies": [-0.5]}
+            )()
+
+    class _Model:
+        def to(self, device):
+            return self
+
+        def cpu(self):
+            return self
+
+    class _Trainer:
+        def __init__(self, **kwargs):
+            pass
+
+        def train_model(self, model, train_loader, valid_loader, loss_fn):
+            return model, {"best_epoch": 1}
+
+    @staticmethod
+    def _metrics():
+        states = {state: 0.1 for state in helper.STATE_LABELS}
+        return {
+            "energy_mae_ev": 0.1,
+            "force_mae_ev_per_ang": 0.1,
+            "energy_mae_by_state_ev": states,
+            "force_mae_by_state_ev_per_ang": states,
+        }
+
+    def test_cross_validation_fits_automatic_e0s_from_training_pool(self) -> None:
+        self._Builder.instances.clear()
+        with (
+            tempfile.TemporaryDirectory() as temporary_dir,
+            patch.object(helper, "seed_everything"),
+            patch.object(helper, "_evaluate", return_value=self._metrics()),
+            patch.object(helper, "_save_loss_plot", return_value="loss.png"),
+            patch.object(helper, "_save_epoch_mae_plot", return_value="mae.png"),
+            patch.object(helper.torch, "save"),
+        ):
+            training_pool = ["train_0", "train_1", "train_2", "train_3"]
+            helper._train_k_fold_models(
+                initial_model=self._Model(),
+                all_atoms=training_pool,
+                test_atoms=["test_0"],
+                model_prefix="model",
+                run_dir=Path(temporary_dir),
+                data_builder_class=self._Builder,
+                trainer_class=self._Trainer,
+                tester=object(),
+                loss_fn=object(),
+                device="cpu",
+                seed=42,
+                k=2,
+                r_max=5.0,
+                batch_size=2,
+                max_epochs=1,
+                learning_rate=0.001,
+                trainer_options={},
+                energy_key="REF_energy",
+                forces_key="REF_forces",
+                e0s=None,
+            )
+        builder = self._Builder.instances[0]
+        self.assertIsNone(builder.kwargs["E0s"])
+        self.assertEqual(builder.load_calls[0][0], training_pool)
+        self.assertEqual(builder.load_calls[1][0], ["test_0"])
 
 
 if __name__ == "__main__":

@@ -17,9 +17,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.helper import (
-    BASE_E0S, BATCH_SIZE, DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEVICE,
-    FULL_E0S, MAX_EPOCHS, R_MAX, SCRATCH_LR, SEED, VALIDATION_FRACTION,
-    _e0s_from_config, _import_project_modules, _is_scratch_config,
+    BATCH_SIZE, DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEVICE,
+    MAX_EPOCHS, R_MAX, SCRATCH_LR, SEED, VALIDATION_FRACTION,
+    _e0s_from_config, _e0s_from_metadata, _import_project_modules, _is_scratch_config,
     _next_run_dir, _path, _read_atoms, _required, _save_epoch_mae_plot,
     _save_fold_selection_plot, _save_loss_plot, _train_k_fold_models,
     _train_model, _trainer_options_from_config, _validate_device, _write_json,
@@ -44,7 +44,6 @@ def _stage_config(config: dict[str, Any]) -> dict[str, Any]:
             "test_xyz_key": "base_test_xyz",
             "count_key": "base_n_geometries",
             "e0_key": "base_E0s",
-            "e0_defaults": BASE_E0S,
             "epochs_key": "base_max_epochs",
             "learning_rate_key": "base_learning_rate",
         }
@@ -59,7 +58,6 @@ def _stage_config(config: dict[str, Any]) -> dict[str, Any]:
         "test_xyz_key": "transfer_test_xyz",
         "count_key": "transfer_n_geometries",
         "e0_key": "full_E0s",
-        "e0_defaults": FULL_E0S,
         "epochs_key": "full_max_epochs",
         "learning_rate_key": "full_learning_rate",
     }
@@ -112,7 +110,7 @@ def run_config(config_path: Path, output_dir: Path, run_dir: Path | None = None)
         if not cross_validation and not 0 < validation_fraction < 1:
             raise ValueError("'validation_fraction' must be between 0 and 1")
         device = _validate_device(str(config.get("device", DEVICE)))
-        e0s = _e0s_from_config(config, stage["e0_key"], stage["e0_defaults"])
+        e0s = _e0s_from_config(config, stage["e0_key"])
         trainer_options = _trainer_options_from_config(config)
         preset = config.get("preset", "default_ani")
         if not isinstance(preset, str) or not preset:
@@ -139,6 +137,7 @@ def run_config(config_path: Path, output_dir: Path, run_dir: Path | None = None)
         if cross_validation:
             builder = AtomDataLoaderBuilder(cutoff=r_max, energy_key=energy_key, forces_key=forces_key, E0s=e0s)
             builder.load(atoms, batch_size=batch_size, shuffle=False)
+            resolved_e0s = _e0s_from_metadata(builder.get_metadata())
             seed_everything(seed)
             initial_model = initialise_autoencoder(builder.get_metadata(), preset=preset, load_base=load_base).to(device)
             partial_run: dict[str, Any] = {}
@@ -161,7 +160,7 @@ def run_config(config_path: Path, output_dir: Path, run_dir: Path | None = None)
             splitter = KFold(n_splits=k, shuffle=True, random_state=seed)
             for fold_number, (train_indices, valid_indices) in enumerate(splitter.split(range(len(atoms))), start=1):
                 model_run["artifacts"][f"model_{fold_number}"]["selection_plot"] = _save_fold_selection_plot(run_dir=run_dir, base_atoms=atoms, base_test_atoms=test_atoms, sampled_global_indices=np.arange(len(atoms)), fold_train_indices=train_indices, fold_valid_indices=valid_indices, fold_number=fold_number, model_prefix=stage["model_prefix"], descriptors=descriptors)
-            result.update({"status": "completed", "config": config, "transfer_learning": False, "cross_validation": True, "k": k, "seed": seed, "device": str(device), "E0s": {stage["size_key"]: e0s}, "trainer_options": trainer_options, "model_initialization": {"preset": preset, "load_base": load_base}, "dataset_sizes": {stage["size_key"]: len(atoms), f"{stage['size_key']}_test": len(test_atoms)}, "metrics": {stage["cv_model_key"]: model_run["aggregate_test_metrics"]}, "cross_validation_training": {stage["cv_model_key"]: model_run}, "cross_validation_progress": {stage["cv_model_key"]: {"completed_folds": model_run["completed_folds"], "total_folds": model_run["total_folds"]}}, "models": {stage["cv_model_key"]: model_run["model_paths"]}, "artifacts": {stage["cv_model_key"]: model_run["artifacts"]}})
+            result.update({"status": "completed", "config": config, "transfer_learning": False, "cross_validation": True, "k": k, "seed": seed, "device": str(device), "E0s": {stage["size_key"]: resolved_e0s}, "trainer_options": trainer_options, "model_initialization": {"preset": preset, "load_base": load_base}, "dataset_sizes": {stage["size_key"]: len(atoms), f"{stage['size_key']}_test": len(test_atoms)}, "metrics": {stage["cv_model_key"]: model_run["aggregate_test_metrics"]}, "cross_validation_training": {stage["cv_model_key"]: model_run}, "cross_validation_progress": {stage["cv_model_key"]: {"completed_folds": model_run["completed_folds"], "total_folds": model_run["total_folds"]}}, "models": {stage["cv_model_key"]: model_run["model_paths"]}, "artifacts": {stage["cv_model_key"]: model_run["artifacts"]}})
         else:
             indices = np.arange(len(atoms))
             train_indices, valid_indices = train_test_split(indices, test_size=validation_fraction, random_state=seed, shuffle=True)
@@ -169,7 +168,7 @@ def run_config(config_path: Path, output_dir: Path, run_dir: Path | None = None)
             model_path = (run_dir / f"{stage['model_prefix']}.pt").resolve()
             torch.save(model_run["model"], model_path)
             artifacts = {"loss_plot": _save_loss_plot(run_dir, model_run["history"], title=f"{stage['label'].title()} model", filename=f"{stage['model_prefix']}_loss.png"), "validation_mae_plot": _save_epoch_mae_plot(run_dir, model_run["history"], title=f"{stage['label'].title()} model validation MAE", filename=f"{stage['model_prefix']}_validation_mae.png")}
-            result.update({"status": "completed", "config": config, "transfer_learning": False, "cross_validation": False, "seed": seed, "device": str(device), "E0s": {stage["size_key"]: e0s}, "trainer_options": trainer_options, "model_initialization": {"preset": preset, "load_base": load_base}, "dataset_sizes": {stage["size_key"]: len(atoms), f"{stage['size_key']}_test": len(test_atoms), "train": len(train_indices), "validation": len(valid_indices)}, "train_indices": train_indices, "validation_indices": valid_indices, "metrics": {stage["model_key"]: model_run["metrics"]}, "scratch_training": {stage["model_key"]: {key: value for key, value in model_run.items() if key != "model"}}, "models": {stage["model_key"]: str(model_path)}, "artifacts": artifacts})
+            result.update({"status": "completed", "config": config, "transfer_learning": False, "cross_validation": False, "seed": seed, "device": str(device), "E0s": {stage["size_key"]: model_run["E0s"]}, "trainer_options": trainer_options, "model_initialization": {"preset": preset, "load_base": load_base}, "dataset_sizes": {stage["size_key"]: len(atoms), f"{stage['size_key']}_test": len(test_atoms), "train": len(train_indices), "validation": len(valid_indices)}, "train_indices": train_indices, "validation_indices": valid_indices, "metrics": {stage["model_key"]: model_run["metrics"]}, "scratch_training": {stage["model_key"]: {key: value for key, value in model_run.items() if key != "model"}}, "models": {stage["model_key"]: str(model_path)}, "artifacts": artifacts})
         _write_json(result_path, result)
         return result_path
     except KeyboardInterrupt:

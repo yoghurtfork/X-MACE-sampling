@@ -17,9 +17,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.helper import (
-    BASE_E0S, BATCH_SIZE, DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEVICE,
-    FULL_E0S, MAX_EPOCHS, R_MAX, SCRATCH_LR, SEED, VALIDATION_FRACTION,
-    _e0s_from_config, _evaluate,
+    BATCH_SIZE, DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEVICE,
+    MAX_EPOCHS, R_MAX, SCRATCH_LR, SEED, VALIDATION_FRACTION,
+    _e0s_from_config, _e0s_from_metadata, _evaluate,
     _import_project_modules, _is_scratch_config, _next_run_dir, _path,
     _read_atoms, _required, _save_epoch_mae_plot, _save_fold_selection_plot,
     _save_loss_plot, _save_scratch_mae_plot, _train_k_fold_models,
@@ -99,8 +99,8 @@ def run_config(
             config.get("validation_fraction", VALIDATION_FRACTION)
         )
         device = _validate_device(str(config.get("device", DEVICE)))
-        base_e0s = _e0s_from_config(config, "base_E0s", BASE_E0S)
-        full_e0s = _e0s_from_config(config, "full_E0s", FULL_E0S)
+        base_e0s = _e0s_from_config(config, "base_E0s")
+        full_e0s = _e0s_from_config(config, "full_E0s")
         trainer_options = _trainer_options_from_config(config)
         preset = config.get("preset", "default_ani")
         if not isinstance(preset, str) or not preset:
@@ -201,6 +201,7 @@ def run_config(
                 "trainer_options": trainer_options,
             }
             initial_models = {}
+            resolved_e0s = {}
             for name, atoms, e0s in (
                 ("base", base_atoms, base_e0s),
                 ("full", full_atoms, full_e0s),
@@ -212,6 +213,7 @@ def run_config(
                     E0s=e0s,
                 )
                 builder.load(atoms, batch_size=batch_size, shuffle=False)
+                resolved_e0s[name] = _e0s_from_metadata(builder.get_metadata())
                 seed_everything(seed)
                 initial_models[name] = initialise_autoencoder(
                     builder.get_metadata(),
@@ -325,7 +327,7 @@ def run_config(
                     "warnings": warnings,
                     "seed": seed,
                     "device": str(device),
-                    "E0s": {"base": base_e0s, "full": full_e0s},
+                    "E0s": resolved_e0s,
                     "trainer_options": trainer_options,
                     "model_initialization": {
                         "preset": preset,
@@ -449,7 +451,7 @@ def run_config(
                     "warnings": warnings,
                     "seed": seed,
                     "device": str(device),
-                    "E0s": {"base": base_e0s, "full": full_e0s},
+                    "E0s": {"base": base_run["E0s"], "full": full_run["E0s"]},
                     "trainer_options": trainer_options,
                     "model_initialization": {
                         "preset": preset,
