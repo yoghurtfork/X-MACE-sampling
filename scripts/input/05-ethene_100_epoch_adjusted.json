@@ -4,7 +4,7 @@
   "run": "just_full",
   "cross_validation": false,
   "base_xyz": "../../data/A01_ethene_grid_static_CASSCF.xyz",
-  "transfer_xyz": "../../data/A01_ethene_grid_static_SA3-NEVPT2_22_molcas_no_dihedral_extremes.xyz",
+  "transfer_xyz": "../../data/A01_ethene_grid_static_SA3-NEVPT2_22_molcas_adjusted.xyz",
   "base_test_xyz": "../../data/A01_ethene_offgrid_128_sobol_2e2o.xyz",
   "transfer_test_xyz": "../../data/A01_ethene_offgrid_SA3-NEVPT2_22_molcas.xyz",
   "base_n_geometries": 3731,
