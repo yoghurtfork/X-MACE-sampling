@@ -14,11 +14,6 @@
   "max_epochs": 100,
   "base_max_epochs": 100,
   "base_learning_rate": 0.001,
-  "base_E0s": {
-    "C": -1032.083979117871,
-    "H": -15.357929595328724,
-    "N": -54.5830078125
-  },
   "preset": "default_ani",
   "load_base": "ani500k",
   "optimiser_lr": 0.001,
