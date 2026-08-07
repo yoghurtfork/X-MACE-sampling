@@ -43,12 +43,6 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_geometries(input_path: Path) -> dict:
-    """Load the top-level geometry dictionary from a MessagePack file."""
-    with input_path.open("rb") as msgpack_file:
-        return next(msgpack.Unpacker(msgpack_file, strict_map_key=False))
-
-
 def has_complete_state_data(
     coordinates: list, ground_energy: object, first_excited_energy: object, forces: list
 ) -> bool:
@@ -60,48 +54,55 @@ def has_complete_state_data(
     )
 
 
-def write_azobenzene_xyz(geometries: dict, output_path: Path) -> tuple[Counter, Counter]:
-    """Write valid Z/E azobenzene geometries and return selected and written counts."""
+def write_azobenzene_xyz(
+    input_path: Path, output_path: Path
+) -> tuple[int, Counter, Counter]:
+    """Stream every MessagePack chunk and write valid Z/E azobenzene geometries."""
+    total_geometries = 0
     selected_counts: Counter = Counter()
     written_counts: Counter = Counter()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with output_path.open("w") as xyz_file:
-        for geometry in geometries.values():
-            isomer = INCHIKEY_TO_ISOMER.get(geometry.get("species", {}).get("inchikey"))
-            if isomer is None:
-                continue
+    with input_path.open("rb") as msgpack_file, output_path.open("w") as xyz_file:
+        for geometries in msgpack.Unpacker(msgpack_file, strict_map_key=False):
+            total_geometries += len(geometries)
+            for geometry in geometries.values():
+                isomer = INCHIKEY_TO_ISOMER.get(
+                    geometry.get("species", {}).get("inchikey")
+                )
+                if isomer is None:
+                    continue
 
-            selected_counts[isomer] += 1
-            coordinates = geometry["xyz"]
-            properties = geometry["props"]
-            ground_energy = properties.get("totalenergy")
-            ground_forces = properties.get("forces")
-            excited_states = properties.get("excitedstates", [])
-            first_excited_state = excited_states[0] if excited_states else {}
-            first_excited_energy = first_excited_state.get("energy")
-            first_excited_forces = first_excited_state.get("forces")
-            forces = [ground_forces, first_excited_forces]
+                selected_counts[isomer] += 1
+                coordinates = geometry["xyz"]
+                properties = geometry["props"]
+                ground_energy = properties.get("totalenergy")
+                ground_forces = properties.get("forces")
+                excited_states = properties.get("excitedstates", [])
+                first_excited_state = excited_states[0] if excited_states else {}
+                first_excited_energy = first_excited_state.get("energy")
+                first_excited_forces = first_excited_state.get("forces")
+                forces = [ground_forces, first_excited_forces]
 
-            if not has_complete_state_data(
-                coordinates, ground_energy, first_excited_energy, forces
-            ):
-                continue
+                if not has_complete_state_data(
+                    coordinates, ground_energy, first_excited_energy, forces
+                ):
+                    continue
 
-            energies = [[ground_energy, first_excited_energy]]
-            xyz_file.write(f"{len(coordinates)}\n")
-            xyz_file.write(
-                "Properties=species:S:1:pos:R:3 "
-                f"azobenzene_isomer={isomer} "
-                f'REF_energy="_JSON {json.dumps(energies)}" '
-                f'REF_forces="_JSON {json.dumps(forces)}"\n'
-            )
-            for atomic_number, x, y, z in coordinates:
-                symbol = ATOMIC_SYMBOLS[int(atomic_number)]
-                xyz_file.write(f"{symbol:<2} {x: .8f} {y: .8f} {z: .8f}\n")
-            written_counts[isomer] += 1
+                energies = [[ground_energy, first_excited_energy]]
+                xyz_file.write(f"{len(coordinates)}\n")
+                xyz_file.write(
+                    "Properties=species:S:1:pos:R:3 "
+                    f"azobenzene_isomer={isomer} "
+                    f'REF_energy="_JSON {json.dumps(energies)}" '
+                    f'REF_forces="_JSON {json.dumps(forces)}"\n'
+                )
+                for atomic_number, x, y, z in coordinates:
+                    symbol = ATOMIC_SYMBOLS[int(atomic_number)]
+                    xyz_file.write(f"{symbol:<2} {x: .8f} {y: .8f} {z: .8f}\n")
+                written_counts[isomer] += 1
 
-    return selected_counts, written_counts
+    return total_geometries, selected_counts, written_counts
 
 
 def write_run_log(
@@ -133,13 +134,14 @@ def main() -> None:
     arguments = parse_arguments()
     input_path = arguments.input_path or Path(DEFAULT_INPUT_FILENAME)
     output_path = arguments.output or input_path.with_name(DEFAULT_OUTPUT_FILENAME)
-    geometries = load_geometries(input_path)
-    selected_counts, written_counts = write_azobenzene_xyz(geometries, output_path)
+    total_geometries, selected_counts, written_counts = write_azobenzene_xyz(
+        input_path, output_path
+    )
     write_run_log(
         output_path.with_suffix(".log"),
         input_path,
         output_path,
-        len(geometries),
+        total_geometries,
         selected_counts,
         written_counts,
     )
