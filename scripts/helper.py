@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import ase.io
+from ase.data import chemical_symbols
 import matplotlib
 import numpy as np
 import torch
@@ -37,8 +38,6 @@ TRANSFER_LR = 5.0e-4
 SCRATCH_LR = 1.0e-3
 DEVICE = "cpu"
 VALIDATION_FRACTION = 0.1
-BASE_E0S = {"C": -1032.083979117871, "H": -15.357929595328724}
-FULL_E0S = {"C": -1035.5115207879423, "H": -15.712048126191444}
 STATE_LABELS = ("S0", "S1", "S2")
 
 
@@ -90,14 +89,16 @@ def _required(config: dict[str, Any], key: str) -> Any:
 
 
 def _e0s_from_config(
-    config: dict[str, Any], key: str, defaults: dict[str, float]
-) -> dict[str, float]:
-    """Return defaults overlaid with an optional JSON E0 mapping."""
-    overrides = config.get(key, {})
+    config: dict[str, Any], key: str
+) -> dict[str, float] | None:
+    """Return an explicit E0 mapping, or None to fit E0s from the dataset."""
+    if key not in config:
+        return None
+    overrides = config[key]
     if not isinstance(overrides, dict):
         raise ValueError(f"'{key}' must be a JSON object")
 
-    e0s = defaults.copy()
+    e0s = {}
     for element, energy in overrides.items():
         if not isinstance(element, str) or not element:
             raise ValueError(f"'{key}' element names must be non-empty strings")
@@ -105,6 +106,16 @@ def _e0s_from_config(
             raise ValueError(f"'{key}' values must be JSON numbers")
         e0s[element] = float(energy)
     return e0s
+
+
+def _e0s_from_metadata(metadata: Any) -> dict[str, float]:
+    """Return the atomic-energy offsets resolved by an X-MACE data builder."""
+    return {
+        chemical_symbols[int(atomic_number)]: float(energy)
+        for atomic_number, energy in zip(
+            metadata.atomic_numbers, metadata.atomic_energies
+        )
+    }
 
 
 def _trainer_options_from_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -772,7 +783,7 @@ def _train_k_fold_models(
     trainer_options: dict[str, Any],
     energy_key: str,
     forces_key: str,
-    e0s: dict[str, float],
+    e0s: dict[str, float] | None,
     on_fold_complete: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Train, test, plot, and save a set of X-MACE K-fold models."""
@@ -787,6 +798,10 @@ def _train_k_fold_models(
         forces_key=forces_key,
         E0s=e0s,
     )
+    # Build metadata, including automatic E0s, from the training pool rather
+    # than from the held-out test data.
+    builder.load(all_atoms, batch_size=batch_size, shuffle=False)
+    resolved_e0s = _e0s_from_metadata(builder.get_metadata())
     test_loader = builder.load(
         test_atoms, batch_size=batch_size, shuffle=False
     )
@@ -869,7 +884,7 @@ def _train_k_fold_models(
         model_paths,
         total_folds=k,
         started_at=started_at,
-    )
+    ) | {"E0s": resolved_e0s}
 
 
 def _cross_validation_snapshot(
@@ -1075,7 +1090,7 @@ def _train_model(
     forces_key: str,
     preset: str,
     load_base: str | None,
-    e0s: dict[str, float],
+    e0s: dict[str, float] | None,
 ) -> dict[str, Any]:
     builder = builder_class(
         cutoff=r_max,
@@ -1092,6 +1107,7 @@ def _train_model(
     test_loader = builder.load(
         test_atoms, batch_size=batch_size, shuffle=False
     )
+    resolved_e0s = _e0s_from_metadata(builder.get_metadata())
     seed_everything(seed)
     model = initialise_autoencoder(
         builder.get_metadata(), preset=preset, load_base=load_base
@@ -1114,6 +1130,7 @@ def _train_model(
         "training_seconds": time.time() - started_at,
         "max_epochs": max_epochs,
         "learning_rate": learning_rate,
+        "E0s": resolved_e0s,
     }
 
 
