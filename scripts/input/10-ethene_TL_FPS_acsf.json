@@ -1,5 +1,5 @@
 {
-  "ignore": false,
+  "ignore": true,
   "transfer_learning": true,
   "cross_validation": true,
   "k": 5,
