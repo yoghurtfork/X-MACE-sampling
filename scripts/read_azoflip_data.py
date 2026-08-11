@@ -90,12 +90,20 @@ def write_azobenzene_xyz(
                     continue
 
                 energies = [[ground_energy, first_excited_energy]]
+                # X-MACE expects state-resolved forces as
+                # [atom, state, Cartesian component], not [state, atom, component].
+                forces_by_atom = [
+                    [ground_force, excited_force]
+                    for ground_force, excited_force in zip(
+                        ground_forces, first_excited_forces
+                    )
+                ]
                 xyz_file.write(f"{len(coordinates)}\n")
                 xyz_file.write(
                     "Properties=species:S:1:pos:R:3 "
                     f"azobenzene_isomer={isomer} "
                     f'REF_energy="_JSON {json.dumps(energies)}" '
-                    f'REF_forces="_JSON {json.dumps(forces)}"\n'
+                    f'REF_forces="_JSON {json.dumps(forces_by_atom)}"\n'
                 )
                 for atomic_number, x, y, z in coordinates:
                     symbol = ATOMIC_SYMBOLS[int(atomic_number)]
