@@ -31,6 +31,7 @@ from scripts.helper import (
     _required, _save_epoch_mae_plot, _save_fold_selection_plot,
     _save_loss_plot, _save_mae_plot, _save_pca_selection_plots,
     _save_selection_plot, _save_split_plot, _train_k_fold_models,
+    _save_model,
     _trainer_options_for_learning_rate, _trainer_options_from_config,
     _validate_device, _write_json, seed_everything,
 )
@@ -81,6 +82,8 @@ def run_config(
     _write_json(result_path, result)
 
     try:
+        result["config"] = config
+        _write_json(result_path, result)
         seed = int(config.get("seed", SEED))
         cross_validation_value = config.get("cross_validation", False)
         if not isinstance(cross_validation_value, bool):
@@ -370,6 +373,9 @@ def run_config(
                             "transfer_models": snapshot["model_paths"]
                         },
                         "artifacts": {
+                            "data_split_plot": split_plot,
+                            "sample_selection_plot": selection_plot,
+                            **pca_plots,
                             "transfer_models": snapshot["artifacts"]
                         },
                     }
@@ -398,6 +404,7 @@ def run_config(
                 forces_key=str(config.get("forces_key", "REF_forces")),
                 e0s=full_e0s,
                 on_fold_complete=checkpoint_transfer_fold,
+                on_checkpoint=checkpoint_transfer_fold,
             )
             sampled_global_indices = train_indices[sampled_indices]
             fold_selection_plots = {}
@@ -516,19 +523,60 @@ def run_config(
             transfer_valid_atoms, batch_size=batch_size, shuffle=False
         )
         transfer_model = NaiveStrategy().apply(base_model)
+        transfer_model_path = (run_dir / "transfer_model.pt").resolve()
         seed_everything(seed)
         started_at = time.time()
-        transfer_model, transfer_history = trainer.train_model(
-            transfer_model,
-            transfer_train_loader,
-            transfer_valid_loader,
-            loss_fn,
-        )
+        try:
+            transfer_model, transfer_history = trainer.train_model(
+                transfer_model,
+                transfer_train_loader,
+                transfer_valid_loader,
+                loss_fn,
+            )
+        except KeyboardInterrupt:
+            _save_model(transfer_model, transfer_model_path)
+            result.update({
+                "models": {"transfer_model": str(transfer_model_path)},
+                "transfer_training": {
+                    "status": "interrupted",
+                    "model_path": str(transfer_model_path),
+                    "training_seconds": time.time() - started_at,
+                },
+            })
+            _write_json(result_path, result)
+            raise
+        _save_model(transfer_model, transfer_model_path)
         training_seconds = time.time() - started_at
+        result.update({
+            "models": {"transfer_model": str(transfer_model_path)},
+            "transfer_training": {
+                "status": "trained_pending_evaluation",
+                "model_path": str(transfer_model_path),
+                "best_epoch": transfer_history["best_epoch"],
+                "training_seconds": training_seconds,
+                "history": transfer_history,
+            },
+        })
+        _write_json(result_path, result)
         transfer_metrics = _evaluate(
             transfer_model, transfer_test_loader, tester
         )
         transfer_metrics["best_epoch"] = int(transfer_history["best_epoch"])
+        result.update({
+            "metrics": {
+                "base_model": base_metrics,
+                "full_high_fidelity_model": full_metrics,
+                "transfer_model": transfer_metrics,
+            },
+            "transfer_training": {
+                "status": "evaluated_pending_artifacts",
+                "model_path": str(transfer_model_path),
+                "best_epoch": transfer_history["best_epoch"],
+                "training_seconds": training_seconds,
+                "history": transfer_history,
+            },
+        })
+        _write_json(result_path, result)
 
         loss_plot = _save_loss_plot(run_dir, transfer_history)
         metrics_plot = _save_mae_plot(
@@ -579,10 +627,13 @@ def run_config(
                     "transfer_model": transfer_metrics,
                 },
                 "transfer_training": {
+                    "status": "completed",
+                    "model_path": str(transfer_model_path),
                     "best_epoch": transfer_history["best_epoch"],
                     "training_seconds": training_seconds,
                     "history": transfer_history,
                 },
+                "models": {"transfer_model": str(transfer_model_path)},
                 "artifacts": {
                     "data_split_plot": split_plot,
                     "sample_selection_plot": selection_plot,

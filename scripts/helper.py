@@ -242,6 +242,15 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
     temporary_path.replace(path)
 
 
+def _save_model(model: torch.nn.Module, path: Path) -> Path:
+    """Atomically persist a model without changing its in-memory device."""
+    path = path.resolve()
+    temporary_path = path.with_suffix(path.suffix + ".tmp")
+    torch.save(model, temporary_path)
+    temporary_path.replace(path)
+    return path
+
+
 def _validate_device(name: str) -> torch.device:
     if name not in {"cpu", "cuda"}:
         raise ValueError("'device' must be either 'cpu' or 'cuda'")
@@ -785,6 +794,7 @@ def _train_k_fold_models(
     forces_key: str,
     e0s: dict[str, float] | None,
     on_fold_complete: Callable[[dict[str, Any]], None] | None = None,
+    on_checkpoint: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Train, test, plot, and save a set of X-MACE K-fold models."""
     if not 2 <= k <= len(all_atoms):
@@ -824,6 +834,8 @@ def _train_k_fold_models(
             batch_size=batch_size,
             shuffle=False,
         )
+        model_key = f"model_{fold_number}"
+        model_path = (run_dir / f"{model_prefix}_fold_{fold_number}.pt").resolve()
         fold_model = deepcopy(initial_model).to(device)
         trainer = trainer_class(
             max_epochs=max_epochs,
@@ -832,17 +844,55 @@ def _train_k_fold_models(
                 trainer_options, learning_rate
             ),
         )
-        fold_model, history = trainer.train_model(
-            fold_model, train_loader, valid_loader, loss_fn
-        )
+        try:
+            fold_model, history = trainer.train_model(
+                fold_model, train_loader, valid_loader, loss_fn
+            )
+        except KeyboardInterrupt:
+            _save_model(fold_model, model_path)
+            if on_checkpoint is not None:
+                on_checkpoint(_cross_validation_snapshot(
+                    fold_results, artifacts,
+                    {**model_paths, model_key: str(model_path)}, total_folds=k,
+                    started_at=started_at,
+                    current_fold={
+                        "key": model_key,
+                        "status": "interrupted",
+                        "model_path": str(model_path),
+                    },
+                ))
+            raise
+        _save_model(fold_model, model_path)
+        if on_checkpoint is not None:
+            on_checkpoint(_cross_validation_snapshot(
+                fold_results, artifacts,
+                {**model_paths, model_key: str(model_path)}, total_folds=k,
+                started_at=started_at,
+                current_fold={
+                    "key": model_key,
+                    "status": "trained_pending_evaluation",
+                    "model_path": str(model_path),
+                    "history": history,
+                },
+            ))
         metrics = _evaluate(fold_model, test_loader, tester)
         metrics["best_epoch"] = int(history["best_epoch"])
-        fold_model = fold_model.cpu()
-        model_key = f"model_{fold_number}"
-        model_path = (
-            run_dir / f"{model_prefix}_fold_{fold_number}.pt"
-        ).resolve()
-        torch.save(fold_model, model_path)
+        fold_results[model_key] = {
+            "history": history,
+            "metrics": metrics,
+            "model_path": str(model_path),
+        }
+        model_paths[model_key] = str(model_path)
+        if on_checkpoint is not None:
+            on_checkpoint(_cross_validation_snapshot(
+                fold_results, artifacts, model_paths, total_folds=k,
+                started_at=started_at,
+                current_fold={
+                    "key": model_key,
+                    "status": "evaluated_pending_artifacts",
+                    "model_path": str(model_path),
+                },
+            ))
         loss_plot = _save_loss_plot(
             run_dir,
             history,
@@ -858,12 +908,6 @@ def _train_k_fold_models(
             ),
             filename=f"{model_prefix}_fold_{fold_number}_validation_mae.png",
         )
-        fold_results[model_key] = {
-            "history": history,
-            "metrics": metrics,
-            "model_path": str(model_path),
-        }
-        model_paths[model_key] = str(model_path)
         artifacts[model_key] = {
             "loss_plot": loss_plot,
             "validation_mae_plot": mae_plot,
@@ -894,26 +938,33 @@ def _cross_validation_snapshot(
     *,
     total_folds: int,
     started_at: float,
+    current_fold: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    best_epochs = np.asarray(
-        [fold["metrics"]["best_epoch"] for fold in fold_results.values()],
-        dtype=float,
-    )
-    return {
+    if fold_results:
+        best_epochs = np.asarray(
+            [fold["metrics"]["best_epoch"] for fold in fold_results.values()],
+            dtype=float,
+        )
+        combined_validation: dict[str, Any] | None = {
+            "best_epoch": [float(np.mean(best_epochs)), float(np.var(best_epochs))]
+        }
+        aggregate_metrics: dict[str, Any] | None = _aggregate_fold_metrics(fold_results)
+    else:
+        combined_validation = None
+        aggregate_metrics = None
+    snapshot = {
         "folds": fold_results,
-        "combined_validation": {
-            "best_epoch": [
-                float(np.mean(best_epochs)),
-                float(np.var(best_epochs)),
-            ]
-        },
-        "aggregate_test_metrics": _aggregate_fold_metrics(fold_results),
+        "combined_validation": combined_validation,
+        "aggregate_test_metrics": aggregate_metrics,
         "training_seconds": time.time() - started_at,
         "model_paths": model_paths,
         "artifacts": artifacts,
         "completed_folds": len(fold_results),
         "total_folds": total_folds,
     }
+    if current_fold is not None:
+        snapshot["current_fold"] = current_fold
+    return snapshot
 
 
 def _save_fold_selection_plot(
@@ -1089,6 +1140,8 @@ def _train_model(
     preset: str,
     load_base: str | None,
     e0s: dict[str, float] | None,
+    model_path: Path | None = None,
+    on_checkpoint: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     builder = builder_class(
         cutoff=r_max,
@@ -1116,11 +1169,42 @@ def _train_model(
         **_trainer_options_for_learning_rate(trainer_options, learning_rate),
     )
     started_at = time.time()
-    model, history = trainer.train_model(
-        model, train_loader, valid_loader, loss_fn
-    )
+    try:
+        model, history = trainer.train_model(
+            model, train_loader, valid_loader, loss_fn
+        )
+    except KeyboardInterrupt:
+        if model_path is not None:
+            saved_path = _save_model(model, model_path)
+            if on_checkpoint is not None:
+                on_checkpoint({
+                    "status": "interrupted",
+                    "model_path": str(saved_path),
+                    "training_seconds": time.time() - started_at,
+                    "E0s": resolved_e0s,
+                })
+        raise
+    if model_path is not None:
+        saved_path = _save_model(model, model_path)
+        if on_checkpoint is not None:
+            on_checkpoint({
+                "status": "trained_pending_evaluation",
+                "model_path": str(saved_path),
+                "history": history,
+                "training_seconds": time.time() - started_at,
+                "E0s": resolved_e0s,
+            })
     metrics = _evaluate(model, test_loader, tester)
     metrics["best_epoch"] = int(history["best_epoch"])
+    if model_path is not None and on_checkpoint is not None:
+        on_checkpoint({
+            "status": "evaluated_pending_artifacts",
+            "model_path": str(model_path.resolve()),
+            "history": history,
+            "metrics": metrics,
+            "training_seconds": time.time() - started_at,
+            "E0s": resolved_e0s,
+        })
     return {
         "model": model,
         "history": history,
@@ -1129,6 +1213,7 @@ def _train_model(
         "max_epochs": max_epochs,
         "learning_rate": learning_rate,
         "E0s": resolved_e0s,
+        "model_path": str(model_path.resolve()) if model_path is not None else None,
     }
 
 
