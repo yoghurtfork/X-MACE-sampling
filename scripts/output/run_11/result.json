@@ -1,6 +1,0 @@
-{
-  "status": "running",
-  "input_file": "/home/yutong/X-MACE-sampling/scripts/input/04-butene.json",
-  "run_directory": "/home/yutong/X-MACE-sampling/scripts/output/run_11",
-  "program": "base_full_trainer.py"
-}
