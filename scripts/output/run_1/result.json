@@ -1,0 +1,11 @@
+{
+  "status": "failed",
+  "input_file": "/home/user/X-MACE-sampling/scripts/input/01-azoflip_base_training.json",
+  "run_directory": "/home/user/X-MACE-sampling/scripts/output/run_1",
+  "program": "single_trainer.py",
+  "run": "just_base",
+  "error": {
+    "type": "RuntimeError",
+    "message": "The size of tensor a (2) must match the size of tensor b (24) at non-singleton dimension 1"
+  }
+}
