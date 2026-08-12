@@ -1,5 +1,5 @@
 {
-  "ignore": true,
+  "ignore": false,
   "transfer_learning": true,
   "cross_validation": true,
   "k": 5,
@@ -15,7 +15,7 @@
   "descriptor_kwargs": {},
   "pca": false,
   "selector": "k_means_clustering_weighted",
-  "selector_kwargs": {"n_clusters": 25, "random_state": 42},
+  "selector_kwargs": {"n_clusters": 40, "random_state": 42},
   "n_samples": 100,
   "seed": 42,
   "device": "cuda",
