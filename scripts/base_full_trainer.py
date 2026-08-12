@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import torch
 from sklearn.model_selection import KFold, train_test_split
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -69,6 +68,8 @@ def run_config(
     _write_json(result_path, result)
 
     try:
+        result["config"] = config
+        _write_json(result_path, result)
         seed = int(config.get("seed", SEED))
         cross_validation = config.get("cross_validation", False)
         if not isinstance(cross_validation, bool):
@@ -266,6 +267,9 @@ def run_config(
                 on_fold_complete=lambda snapshot: checkpoint_fold(
                     "base_models", snapshot
                 ),
+                on_checkpoint=lambda snapshot: checkpoint_fold(
+                    "base_models", snapshot
+                ),
                 **common,
             )
             full_run = _train_k_fold_models(
@@ -277,6 +281,9 @@ def run_config(
                 learning_rate=full_lr,
                 e0s=full_e0s,
                 on_fold_complete=lambda snapshot: checkpoint_fold(
+                    "full_high_fidelity_models", snapshot
+                ),
+                on_checkpoint=lambda snapshot: checkpoint_fold(
                     "full_high_fidelity_models", snapshot
                 ),
                 **common,
@@ -394,6 +401,18 @@ def run_config(
                 "load_base": load_base,
                 "trainer_options": trainer_options,
             }
+            base_path = (run_dir / "base_model.pt").resolve()
+            full_path = (run_dir / "full_model.pt").resolve()
+
+            def checkpoint_model(model_key: str, snapshot: dict[str, Any]) -> None:
+                result.update({
+                    "models": {**result.get("models", {}), model_key: snapshot["model_path"]},
+                    "scratch_training": {
+                        **result.get("scratch_training", {}), model_key: snapshot,
+                    },
+                })
+                _write_json(result_path, result)
+
             base_run = _train_model(
                 train_atoms=[base_atoms[i] for i in train_indices],
                 valid_atoms=[base_atoms[i] for i in valid_indices],
@@ -401,6 +420,10 @@ def run_config(
                 max_epochs=base_max_epochs,
                 learning_rate=base_lr,
                 e0s=base_e0s,
+                model_path=base_path,
+                on_checkpoint=lambda snapshot: checkpoint_model(
+                    "base_model", snapshot
+                ),
                 **common,
             )
             full_run = _train_model(
@@ -410,12 +433,12 @@ def run_config(
                 max_epochs=full_max_epochs,
                 learning_rate=full_lr,
                 e0s=full_e0s,
+                model_path=full_path,
+                on_checkpoint=lambda snapshot: checkpoint_model(
+                    "full_high_fidelity_model", snapshot
+                ),
                 **common,
             )
-            base_path = (run_dir / "base_model.pt").resolve()
-            full_path = (run_dir / "full_model.pt").resolve()
-            torch.save(base_run["model"], base_path)
-            torch.save(full_run["model"], full_path)
             artifacts = {}
             for prefix, run in (("base", base_run), ("full", full_run)):
                 artifacts[f"{prefix}_loss_plot"] = _save_loss_plot(

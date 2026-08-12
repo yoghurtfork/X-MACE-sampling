@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import torch
 from sklearn.model_selection import KFold, train_test_split
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -87,6 +86,8 @@ def run_config(config_path: Path, output_dir: Path, run_dir: Path | None = None)
     _write_json(result_path, result)
 
     try:
+        result["config"] = config
+        _write_json(result_path, result)
         seed = int(config.get("seed", SEED))
         cross_validation = config.get("cross_validation", False)
         if not isinstance(cross_validation, bool):
@@ -156,6 +157,7 @@ def run_config(config_path: Path, output_dir: Path, run_dir: Path | None = None)
                 learning_rate=learning_rate, trainer_options=trainer_options,
                 energy_key=energy_key, forces_key=forces_key, e0s=e0s,
                 on_fold_complete=checkpoint,
+                on_checkpoint=checkpoint,
             )
             splitter = KFold(n_splits=k, shuffle=True, random_state=seed)
             for fold_number, (train_indices, valid_indices) in enumerate(splitter.split(range(len(atoms))), start=1):
@@ -164,9 +166,16 @@ def run_config(config_path: Path, output_dir: Path, run_dir: Path | None = None)
         else:
             indices = np.arange(len(atoms))
             train_indices, valid_indices = train_test_split(indices, test_size=validation_fraction, random_state=seed, shuffle=True)
-            model_run = _train_model(train_atoms=[atoms[i] for i in train_indices], valid_atoms=[atoms[i] for i in valid_indices], test_atoms=test_atoms, builder_class=AtomDataLoaderBuilder, trainer_class=Trainer, initialise_autoencoder=initialise_autoencoder, tester=tester, loss_fn=loss_fn, device=device, seed=seed, r_max=r_max, batch_size=batch_size, max_epochs=stage_epochs, learning_rate=learning_rate, trainer_options=trainer_options, energy_key=energy_key, forces_key=forces_key, preset=preset, load_base=load_base, e0s=e0s)
             model_path = (run_dir / f"{stage['model_prefix']}.pt").resolve()
-            torch.save(model_run["model"], model_path)
+
+            def checkpoint_model(snapshot: dict[str, Any]) -> None:
+                result.update({
+                    "models": {stage["model_key"]: snapshot["model_path"]},
+                    "scratch_training": {stage["model_key"]: snapshot},
+                })
+                _write_json(result_path, result)
+
+            model_run = _train_model(train_atoms=[atoms[i] for i in train_indices], valid_atoms=[atoms[i] for i in valid_indices], test_atoms=test_atoms, builder_class=AtomDataLoaderBuilder, trainer_class=Trainer, initialise_autoencoder=initialise_autoencoder, tester=tester, loss_fn=loss_fn, device=device, seed=seed, r_max=r_max, batch_size=batch_size, max_epochs=stage_epochs, learning_rate=learning_rate, trainer_options=trainer_options, energy_key=energy_key, forces_key=forces_key, preset=preset, load_base=load_base, e0s=e0s, model_path=model_path, on_checkpoint=checkpoint_model)
             artifacts = {"loss_plot": _save_loss_plot(run_dir, model_run["history"], title=f"{stage['label'].title()} model", filename=f"{stage['model_prefix']}_loss.png"), "validation_mae_plot": _save_epoch_mae_plot(run_dir, model_run["history"], title=f"{stage['label'].title()} model validation MAE", filename=f"{stage['model_prefix']}_validation_mae.png")}
             result.update({"status": "completed", "config": config, "transfer_learning": False, "cross_validation": False, "seed": seed, "device": str(device), "E0s": {stage["size_key"]: model_run["E0s"]}, "trainer_options": trainer_options, "model_initialization": {"preset": preset, "load_base": load_base}, "dataset_sizes": {stage["size_key"]: len(atoms), f"{stage['size_key']}_test": len(test_atoms), "train": len(train_indices), "validation": len(valid_indices)}, "train_indices": train_indices, "validation_indices": valid_indices, "metrics": {stage["model_key"]: model_run["metrics"]}, "scratch_training": {stage["model_key"]: {key: value for key, value in model_run.items() if key != "model"}}, "models": {stage["model_key"]: str(model_path)}, "artifacts": artifacts})
         _write_json(result_path, result)

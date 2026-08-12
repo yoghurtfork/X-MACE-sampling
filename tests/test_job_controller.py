@@ -278,7 +278,7 @@ class AutomaticE0Tests(unittest.TestCase):
 
     @staticmethod
     def _metrics():
-        states = {state: 0.1 for state in helper.STATE_LABELS}
+        states = {f"S{state}": 0.1 for state in range(3)}
         return {
             "energy_mae_ev": 0.1,
             "force_mae_ev_per_ang": 0.1,
@@ -294,7 +294,7 @@ class AutomaticE0Tests(unittest.TestCase):
             patch.object(helper, "_evaluate", return_value=self._metrics()),
             patch.object(helper, "_save_loss_plot", return_value="loss.png"),
             patch.object(helper, "_save_epoch_mae_plot", return_value="mae.png"),
-            patch.object(helper.torch, "save"),
+            patch.object(helper, "_save_model"),
         ):
             training_pool = ["train_0", "train_1", "train_2", "train_3"]
             helper._train_k_fold_models(
@@ -323,6 +323,81 @@ class AutomaticE0Tests(unittest.TestCase):
         self.assertIsNone(builder.kwargs["E0s"])
         self.assertEqual(builder.load_calls[0][0], training_pool)
         self.assertEqual(builder.load_calls[1][0], ["test_0"])
+
+
+class TrainingCheckpointTests(unittest.TestCase):
+    class _Builder(AutomaticE0Tests._Builder):
+        pass
+
+    class _Model(AutomaticE0Tests._Model):
+        pass
+
+    class _InterruptingTrainer:
+        def __init__(self, **kwargs):
+            pass
+
+        def train_model(self, model, train_loader, valid_loader, loss_fn):
+            raise KeyboardInterrupt
+
+    class _CompletedTrainer:
+        def __init__(self, **kwargs):
+            pass
+
+        def train_model(self, model, train_loader, valid_loader, loss_fn):
+            return model, {"best_epoch": 1}
+
+    def _kwargs(self, run_dir: Path) -> dict[str, object]:
+        return {
+            "initial_model": self._Model(),
+            "all_atoms": ["train_0", "train_1"],
+            "test_atoms": ["test_0"],
+            "model_prefix": "model",
+            "run_dir": run_dir,
+            "data_builder_class": self._Builder,
+            "tester": object(),
+            "loss_fn": object(),
+            "device": "cpu",
+            "seed": 42,
+            "k": 2,
+            "r_max": 5.0,
+            "batch_size": 2,
+            "max_epochs": 1,
+            "learning_rate": 0.001,
+            "trainer_options": {},
+            "energy_key": "REF_energy",
+            "forces_key": "REF_forces",
+            "e0s": None,
+        }
+
+    def test_interruption_saves_current_fold_and_reports_it(self) -> None:
+        snapshots = []
+        with tempfile.TemporaryDirectory() as temporary_dir, patch.object(
+            helper, "_save_model", side_effect=lambda model, path: path
+        ) as save_model:
+            with self.assertRaises(KeyboardInterrupt):
+                helper._train_k_fold_models(
+                    trainer_class=self._InterruptingTrainer,
+                    on_checkpoint=snapshots.append,
+                    **self._kwargs(Path(temporary_dir)),
+                )
+
+        self.assertTrue(save_model.called)
+        self.assertEqual(snapshots[-1]["current_fold"]["status"], "interrupted")
+        self.assertEqual(snapshots[-1]["completed_folds"], 0)
+
+    def test_completed_fold_is_saved_before_evaluation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir, patch.object(
+            helper, "_save_model", side_effect=lambda model, path: path
+        ) as save_model, patch.object(
+            helper, "_evaluate", side_effect=RuntimeError("evaluation failed")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "evaluation failed"):
+                helper._train_k_fold_models(
+                    trainer_class=self._CompletedTrainer,
+                    **self._kwargs(Path(temporary_dir)),
+                )
+
+        self.assertTrue(save_model.called)
 
 
 if __name__ == "__main__":

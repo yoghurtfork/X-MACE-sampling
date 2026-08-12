@@ -204,7 +204,7 @@ def get_energies(atoms):
 def get_ci_score(atoms, force_weight=1.0, energy_weight=1.0):
     """Calculate a conical-intersection score for one geometry.
 
-    Scores are calculated for the two adjacent pairs of electronic states:
+    Scores are calculated for every adjacent pair of electronic states:
         (force_weight * RMS(F_j - F_i)) / (energy_weight * (E_j - E_i) + 1e-6)
 
     The larger of the two scores is returned. Each pair's intermediate values
@@ -213,10 +213,9 @@ def get_ci_score(atoms, force_weight=1.0, energy_weight=1.0):
     if energy_weight < 0 or force_weight < 0:
         raise ValueError("energy_weight and force_weight must be non-negative.")
 
-    energies = np.asarray(atoms.info["REF_energy"], dtype=float)
-    if energies.shape != (1, 3):
-        raise ValueError("atoms must provide exactly three energy levels.")
-    energies = energies[0]
+    energies = np.asarray(atoms.info["REF_energy"], dtype=float).reshape(-1)
+    if len(energies) < 2:
+        raise ValueError("atoms must provide at least two energy levels.")
 
     if "REF_forces" in atoms.arrays:
         forces = np.asarray(atoms.arrays["REF_forces"], dtype=float)
@@ -226,14 +225,16 @@ def get_ci_score(atoms, force_weight=1.0, energy_weight=1.0):
         raise KeyError("atoms must provide state-resolved 'REF_forces'.")
 
     n_atoms = len(atoms)
-    if forces.shape != (n_atoms, 3, 3):
+    if forces.shape != (n_atoms, len(energies), 3):
         raise ValueError(
-            "REF_forces must have shape (n_atoms, 3, 3); "
+            "REF_forces must have shape (n_atoms, n_states, 3), where "
+            f"n_states is {len(energies)}; "
             f"got {forces.shape}."
         )
 
     pair_scores = []
-    for first, second in ((0, 1), (1, 2)):
+    for first in range(len(energies) - 1):
+        second = first + 1
         gap = energies[second] - energies[first]
         delta_forces = forces[:, second, :] - forces[:, first, :]
         force_diff = np.sqrt(np.mean(delta_forces**2))
