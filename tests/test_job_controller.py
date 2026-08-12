@@ -278,7 +278,7 @@ class AutomaticE0Tests(unittest.TestCase):
 
     @staticmethod
     def _metrics():
-        states = {state: 0.1 for state in helper.STATE_LABELS}
+        states = {f"S{state}": 0.1 for state in range(3)}
         return {
             "energy_mae_ev": 0.1,
             "force_mae_ev_per_ang": 0.1,

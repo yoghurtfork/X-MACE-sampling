@@ -38,9 +38,6 @@ TRANSFER_LR = 5.0e-4
 SCRATCH_LR = 1.0e-3
 DEVICE = "cpu"
 VALIDATION_FRACTION = 0.1
-STATE_LABELS = ("S0", "S1", "S2")
-
-
 def seed_everything(TORCH_SEED):
     random.seed(TORCH_SEED)
     os.environ['PYTHONHASHSEED'] = str(TORCH_SEED)
@@ -278,20 +275,15 @@ def _evaluate(
 
 
 def _maes_by_state(values: Any, metric_name: str) -> dict[str, float]:
-    """Label the three X-MACE per-state MAEs as S0, S1, and S2."""
+    """Label X-MACE per-state MAEs as consecutively numbered states."""
     if isinstance(values, torch.Tensor):
         values = values.detach().cpu().numpy()
     if isinstance(values, dict):
         values = list(values.values())
     values = np.asarray(values, dtype=float).reshape(-1)
-    if len(values) != len(STATE_LABELS):
-        raise ValueError(
-            f"Tester returned {len(values)} {metric_name} MAEs; expected "
-            f"{len(STATE_LABELS)} for S0, S1, and S2"
-        )
-    return {
-        state: float(value) for state, value in zip(STATE_LABELS, values)
-    }
+    if not len(values):
+        raise ValueError(f"Tester returned no {metric_name} MAEs")
+    return {f"S{index}": float(value) for index, value in enumerate(values)}
 
 
 def _save_split_plot(
@@ -638,7 +630,6 @@ def _save_mae_plot(
     cross_validation: bool,
 ) -> str:
     categories = ["Base model", "Full HF model", "Transfer model"]
-    state_colors = ["#377eb8", "#ff7f00", "#4daf4a"]
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
 
     if cross_validation:
@@ -679,7 +670,6 @@ def _save_mae_plot(
             (base_metrics, full_metrics, transfer_metrics),
             metric,
             cross_validation=cross_validation,
-            colors=state_colors,
         )
         ax.set(ylabel=ylabel, title=title)
         ax.grid(axis="y", alpha=0.3)
@@ -698,13 +688,22 @@ def _plot_state_mae_bars(
     metric: str,
     *,
     cross_validation: bool,
-    colors: list[str],
 ) -> None:
-    """Draw grouped S0/S1/S2 MAE bars for the supplied models."""
+    """Draw grouped per-state MAE bars for the supplied models."""
+    states = list(metrics_by_model[0][metric])
+    if not states:
+        raise ValueError(f"No state MAEs are available for {metric}")
+    for model_metrics in metrics_by_model[1:]:
+        if list(model_metrics[metric]) != states:
+            raise ValueError(
+                f"Models have inconsistent state labels for {metric}: "
+                f"expected {states}, got {list(model_metrics[metric])}"
+            )
     positions = np.arange(len(categories), dtype=float)
-    width = 0.24
-    offsets = (np.arange(len(STATE_LABELS)) - 1) * width
-    for offset, state, color in zip(offsets, STATE_LABELS, colors):
+    width = 0.8 / len(states)
+    offsets = (np.arange(len(states)) - (len(states) - 1) / 2) * width
+    colors = plt.get_cmap("tab20", len(states))(np.arange(len(states)))
+    for offset, state, color in zip(offsets, states, colors):
         values = []
         errors = []
         for model_metrics in metrics_by_model:
@@ -747,7 +746,8 @@ def _aggregate_fold_metrics(
         "force_mae_by_state_ev_per_ang",
     ):
         aggregate[metric] = {}
-        for state in STATE_LABELS:
+        states = list(next(iter(fold_results.values()))["metrics"][metric])
+        for state in states:
             values = np.asarray(
                 [
                     fold["metrics"][metric][state]
@@ -1013,7 +1013,6 @@ def _save_scratch_mae_plot(
     cross_validation: bool,
 ) -> str:
     categories = ["Base model", "Full HF model"]
-    state_colors = ["#377eb8", "#ff7f00", "#4daf4a"]
     fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
 
     if cross_validation:
@@ -1057,7 +1056,6 @@ def _save_scratch_mae_plot(
             (base_metrics, full_metrics),
             metric,
             cross_validation=cross_validation,
-            colors=state_colors,
         )
         ax.set(ylabel=ylabel, title=title)
         ax.grid(axis="y", alpha=0.3)
