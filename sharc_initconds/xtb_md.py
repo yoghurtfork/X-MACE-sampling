@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 TEMPERATURE_K = 300
-MD_STEPS = 100_000
+MD_STEPS = 1010
 MD_TIMESTEP_FS = 1
 SAVE_INTERVAL = 10
 
