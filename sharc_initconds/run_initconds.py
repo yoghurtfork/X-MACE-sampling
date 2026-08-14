@@ -15,11 +15,11 @@ from pathlib import Path
 
 
 # EDIT_ME: replace these values with trained X-MACE model paths.
-ENERGY_MODEL = "/home/lim_yt/X-MACE-sampling/outputs/base_models/base_model_run_33_fold_3.pt"
-OSC_MODEL = "/home/lim_yt/X-MACE-sampling/outputs/base_models/base_model_run_33_fold_3.pt"
+ENERGY_MODEL = "/home/lim_yt/X-MACE-sampling/outputs/base_models/base_model_azoflip.pt"
+OSC_MODEL = "/home/lim_yt/X-MACE-sampling/outputs/base_models/azobenzene_oscillator_strength.model"
 
-N_STATES = 3
-N_OSC = 2
+N_STATES = 2
+N_OSC = 1
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 
