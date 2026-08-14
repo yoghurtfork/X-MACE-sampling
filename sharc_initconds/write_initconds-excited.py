@@ -1,16 +1,23 @@
-# Write excite_inp.txt
-# Edit EWIN_LOW, EWIN_HIGH, and SEED for your system.
+"""Write the input file consumed by SHARC's ``excite.py`` utility."""
 
-EWIN_LOW  = 1.6    # lower bound of excitation window, eV
-EWIN_HIGH = 3.3    # upper bound of excitation window, eV
-SEED      = 1234   # random seed; use the string '!' to seed from system time
+from __future__ import annotations
 
-excite_inp = f"""\n\n\n{EWIN_LOW} {EWIN_HIGH}\n\n{SEED}\n\n"""
+import argparse
 
-with open("excite_inp.txt", "w") as f:
-    f.write(excite_inp)
 
-print("excite_inp.txt written. Run excite.py with:")
-print("  python excite.py < excite_inp.txt")
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ewin-low", type=float, default=1.6, help="lower excitation-window bound in eV")
+    parser.add_argument("--ewin-high", type=float, default=3.3, help="upper excitation-window bound in eV")
+    parser.add_argument("--seed", default="1234", help="random seed, or ! for system time")
+    args = parser.parse_args(argv)
+    if args.ewin_low >= args.ewin_high:
+        parser.error("--ewin-low must be lower than --ewin-high")
+    with open("excite_inp.txt", "w", encoding="utf-8") as output:
+        output.write(f"\n\n\n{args.ewin_low} {args.ewin_high}\n\n{args.seed}\n\n")
+    print("excite_inp.txt written")
+    return 0
 
-# then from bash run: python excite.py < excite_inp.txt
+
+if __name__ == "__main__":
+    raise SystemExit(main())

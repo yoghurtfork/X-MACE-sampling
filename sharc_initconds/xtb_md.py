@@ -1,42 +1,61 @@
-# Run a ground-state GFN2-xTB geometry relaxation followed by NVE MD.
-# Usage: python xtb_md.py <input.xyz>
+"""Run a GFN2-xTB relaxation followed by fixed-setting NVE molecular dynamics."""
 
-import sys
-from ase.io import read
-from ase.optimize import BFGS
-from ase.md.verlet import VelocityVerlet
-from ase.md.velocitydistribution import MaxwellBoltzmannDistribution, Stationary, ZeroRotation
-from ase.io.trajectory import Trajectory
-from ase import units
-from xtb.ase.calculator import XTB
+from __future__ import annotations
 
-if len(sys.argv) < 2:
-    raise ValueError("Usage: python xtb_md.py <input.xyz>")
+import argparse
+from pathlib import Path
 
-# ── Load structure ────────────────────────────────────────────────────────
-atoms = read(sys.argv[1])
-atoms.calc = XTB(method="GFN2-xTB")
 
-# ── Geometry relaxation ───────────────────────────────────────────────────
-print(f"Initial energy: {atoms.get_potential_energy():.4f} eV")
-optimizer = BFGS(atoms, logfile="relaxation.log")
-optimizer.run(fmax=0.1)   # converge when max force < 0.1 eV/Å
-print(f"Relaxed energy: {atoms.get_potential_energy():.4f} eV")
-atoms.write("relaxed_mol.xyz")
+TEMPERATURE_K = 300
+MD_STEPS = 100_000
+MD_TIMESTEP_FS = 1
+SAVE_INTERVAL = 10
 
-# ── Initialise velocities at 300 K ───────────────────────────────────────
-MaxwellBoltzmannDistribution(atoms, temperature_K=300)
-Stationary(atoms)     # remove net linear momentum
-ZeroRotation(atoms)   # remove net angular momentum
 
-# ── NVE MD ───────────────────────────────────────────────────────────────
-dyn  = VelocityVerlet(atoms, 1 * units.fs)
-traj = Trajectory("md_trajectory.traj", "w", atoms)
+def run(input_xyz: Path) -> None:
+    from ase import units
+    from ase.io import read
+    from ase.io.trajectory import Trajectory
+    from ase.md.velocitydistribution import MaxwellBoltzmannDistribution, Stationary, ZeroRotation
+    from ase.md.verlet import VelocityVerlet
+    from ase.optimize import BFGS
+    from xtb.ase.calculator import XTB
 
-def print_status():
-    print(f"Step {dyn.nsteps:5d}  E_pot={atoms.get_potential_energy():.4f} eV  "
-          f"E_kin={atoms.get_kinetic_energy():.4f} eV")
+    atoms = read(input_xyz)
+    atoms.calc = XTB(method="GFN2-xTB")
+    print(f"Initial energy: {atoms.get_potential_energy():.4f} eV")
+    optimizer = BFGS(atoms, logfile="relaxation.log")
+    optimizer.run(fmax=0.1)
+    print(f"Relaxed energy: {atoms.get_potential_energy():.4f} eV")
+    atoms.write("relaxed_mol.xyz")
 
-dyn.attach(traj.write,    interval=10)    # save every 10 steps → 10 000 frames
-dyn.attach(print_status, interval=1000)
-dyn.run(100_000)
+    MaxwellBoltzmannDistribution(atoms, temperature_K=TEMPERATURE_K)
+    Stationary(atoms)
+    ZeroRotation(atoms)
+    dynamics = VelocityVerlet(atoms, MD_TIMESTEP_FS * units.fs)
+    trajectory = Trajectory("md_trajectory.traj", "w", atoms)
+
+    def print_status() -> None:
+        print(
+            f"Step {dynamics.nsteps:5d}  E_pot={atoms.get_potential_energy():.4f} eV  "
+            f"E_kin={atoms.get_kinetic_energy():.4f} eV"
+        )
+
+    dynamics.attach(trajectory.write, interval=SAVE_INTERVAL)
+    dynamics.attach(print_status, interval=1000)
+    dynamics.run(MD_STEPS)
+    trajectory.close()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("input_xyz", type=Path, help="single-geometry XYZ input file")
+    args = parser.parse_args(argv)
+    if args.input_xyz.suffix.lower() != ".xyz" or not args.input_xyz.is_file():
+        parser.error(f"input_xyz must be an existing XYZ file: {args.input_xyz}")
+    run(args.input_xyz.resolve())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
