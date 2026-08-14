@@ -16,6 +16,7 @@ Options:
 Environment:
   SHARC=<path>             Required; SHARC installation directory.
   LOCAL_TMAX_FS=<number>   Test trajectory length in fs (default: 10.0).
+  LOCAL_STEPSIZE_FS=<num>  Propagation timestep in fs (default: 0.5).
   LOCAL_NSTATES=<counts>   Optional SHARC state counts, e.g. "2 0 0".
   LOCAL_CHARGE=<charges>   Molecular charges, default: "0 0 0".
   LOCAL_GPU_IDS=<ids>      Comma-separated GPU IDs, e.g. "0,1". Runs one
@@ -80,6 +81,7 @@ export NUMBA_DISABLE_JIT="${NUMBA_DISABLE_JIT:-1}"
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 tmax_fs=${LOCAL_TMAX_FS:-10.0}
+stepsize_fs=${LOCAL_STEPSIZE_FS:-0.5}
 gpu_ids=()
 if [[ -n "${LOCAL_GPU_IDS:-}" ]]; then
     IFS=',' read -r -a gpu_ids <<< "$LOCAL_GPU_IDS"
@@ -179,6 +181,7 @@ for structure in "$@"; do
             --resources "$script_dir/sh-scripts/MACE.resources"
             --charge "${LOCAL_CHARGE:-0 0 0}"
             --tmax "$tmax_fs"
+            --stepsize "$stepsize_fs"
         )
         if [[ -n "${LOCAL_NSTATES:-}" ]]; then
             setup_args+=(--nstates "$LOCAL_NSTATES")
