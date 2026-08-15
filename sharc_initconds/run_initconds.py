@@ -223,6 +223,7 @@ def run_workflow(
 
 
 def main(argv: list[str] | None = None) -> int:
+    os.environ.setdefault("GLIBC_TUNABLES", "glibc.rtld.execstack=2")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input_xyz", type=Path, help="single-geometry XYZ input file")
     parser.add_argument(
