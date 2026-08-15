@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the SHARC initial-condition workflow from one XYZ structure.
 
-Replace the two EDIT_ME model paths below, set SHARC to a SHARC installation
+Set model paths below, set SHARC to a SHARC installation
 root (or its bin directory), then run ``python run_initconds.py molecule.xyz``.
 """
 
@@ -18,11 +18,17 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Paths are relative to this script, so the repository can be moved or cloned
 # anywhere. Replace these with other relative model paths if needed.
-ENERGY_MODEL = "../outputs/base_models/base_model_azoflip.pt"
-OSC_MODEL = "../outputs/base_models/azobenzene_oscillator_strength.model"
+ENERGY_MODEL = "../outputs/base_models/base_model_run_33_fold_3.pt"
+OSC_MODEL = "../outputs/base_models/ethene_oscillator_strength.model"
 
 N_STATES = 2
 N_OSC = 1
+EWIN_LOW = 1.6
+EWIN_HIGH = 3.3
+TEMPERATURE = 300
+MD_STEPS = 1010
+MD_TIMESTEP_FS = 1
+SAVE_INTERVAL = 10
 
 
 def _is_placeholder(value: str) -> bool:
@@ -84,7 +90,18 @@ def _validate_final_output(run_dir: Path) -> Path:
     return output
 
 
-def run_workflow(input_path: Path) -> Path:
+def run_workflow(
+    input_path: Path,
+    *,
+    n_states: int = N_STATES,
+    n_osc: int = N_OSC,
+    ewin_low: float = EWIN_LOW,
+    ewin_high: float = EWIN_HIGH,
+    temperature: float = TEMPERATURE,
+    md_steps: int = MD_STEPS,
+    md_timestep_fs: float = MD_TIMESTEP_FS,
+    save_interval: int = SAVE_INTERVAL,
+) -> Path:
     input_path = input_path.expanduser().resolve()
     energy_model, osc_model, excite = validate_setup(input_path)
     run_dir = input_path.with_name(f"{input_path.stem}_initconds")
@@ -93,7 +110,22 @@ def run_workflow(input_path: Path) -> Path:
     run_dir.mkdir()
 
     stages = [
-        ([sys.executable, str(SCRIPT_DIR / "xtb_md.py"), str(input_path)], "01_xtb_md.log"),
+        (
+            [
+                sys.executable,
+                str(SCRIPT_DIR / "xtb_md.py"),
+                str(input_path),
+                "--temperature",
+                str(temperature),
+                "--md-steps",
+                str(md_steps),
+                "--md-timestep-fs",
+                str(md_timestep_fs),
+                "--save-interval",
+                str(save_interval),
+            ],
+            "01_xtb_md.log",
+        ),
         (
             [
                 sys.executable,
@@ -101,7 +133,7 @@ def run_workflow(input_path: Path) -> Path:
                 "--model",
                 str(energy_model),
                 "--n-states",
-                str(N_STATES),
+                str(n_states),
             ],
             "02_energies.log",
         ),
@@ -112,7 +144,7 @@ def run_workflow(input_path: Path) -> Path:
                 "--model",
                 str(osc_model),
                 "--n-osc",
-                str(N_OSC),
+                str(n_osc),
             ],
             "03_oscillator_strengths.log",
         ),
@@ -121,13 +153,23 @@ def run_workflow(input_path: Path) -> Path:
                 sys.executable,
                 str(SCRIPT_DIR / "write_initconds.py"),
                 "--n-states",
-                str(N_STATES),
+                str(n_states),
                 "--n-osc",
-                str(N_OSC),
+                str(n_osc),
             ],
             "04_initconds.log",
         ),
-        ([sys.executable, str(SCRIPT_DIR / "write_initconds-excited.py")], "05_excite_input.log"),
+        (
+            [
+                sys.executable,
+                str(SCRIPT_DIR / "write_initconds-excited.py"),
+                "--ewin-low",
+                str(ewin_low),
+                "--ewin-high",
+                str(ewin_high),
+            ],
+            "05_excite_input.log",
+        ),
     ]
     for command, log_name in stages:
         run_stage(command, run_dir, log_name)
@@ -140,9 +182,57 @@ def run_workflow(input_path: Path) -> Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input_xyz", type=Path, help="single-geometry XYZ input file")
+    parser.add_argument(
+        "--n-states", type=int, default=N_STATES,
+        help=f"number of electronic states (default: {N_STATES})",
+    )
+    parser.add_argument(
+        "--n-osc", type=int, default=N_OSC,
+        help=f"number of oscillator strengths (default: {N_OSC})",
+    )
+    parser.add_argument(
+        "--ewin-low", type=float, default=EWIN_LOW,
+        help=f"lower excitation-window bound in eV (default: {EWIN_LOW})",
+    )
+    parser.add_argument(
+        "--ewin-high", type=float, default=EWIN_HIGH,
+        help=f"upper excitation-window bound in eV (default: {EWIN_HIGH})",
+    )
+    parser.add_argument(
+        "--temperature", type=float, default=TEMPERATURE,
+        help=f"initial MD temperature in K (default: {TEMPERATURE})",
+    )
+    parser.add_argument(
+        "--md-steps", type=int, default=MD_STEPS,
+        help=f"number of MD steps (default: {MD_STEPS})",
+    )
+    parser.add_argument(
+        "--md-timestep-fs", type=float, default=MD_TIMESTEP_FS,
+        help=f"MD timestep in fs (default: {MD_TIMESTEP_FS})",
+    )
+    parser.add_argument(
+        "--save-interval", type=int, default=SAVE_INTERVAL,
+        help=f"trajectory save interval in MD steps (default: {SAVE_INTERVAL})",
+    )
     args = parser.parse_args(argv)
+    if args.n_states < 2 or args.n_osc != args.n_states - 1:
+        parser.error("--n-states must be >= 2 and --n-osc must equal --n-states minus one")
+    if args.ewin_low >= args.ewin_high:
+        parser.error("--ewin-low must be lower than --ewin-high")
+    if args.temperature <= 0 or args.md_steps < 1 or args.md_timestep_fs <= 0 or args.save_interval < 1:
+        parser.error("--temperature, --md-timestep-fs, and --save-interval must be positive; --md-steps must be at least 1")
     try:
-        output = run_workflow(args.input_xyz)
+        output = run_workflow(
+            args.input_xyz,
+            n_states=args.n_states,
+            n_osc=args.n_osc,
+            ewin_low=args.ewin_low,
+            ewin_high=args.ewin_high,
+            temperature=args.temperature,
+            md_steps=args.md_steps,
+            md_timestep_fs=args.md_timestep_fs,
+            save_interval=args.save_interval,
+        )
     except (ValueError, FileExistsError, subprocess.CalledProcessError, RuntimeError) as error:
         parser.error(str(error))
     print(f"Written {output}")
