@@ -10,7 +10,7 @@ coeff auto
 rngseed 340976
 charge 0 0 0
 ezero    0.0000000000
-tmax 30.000000
+tmax 10.000000
 stepsize 0.500000
 nsubsteps 25
 surf diagonal
