@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -68,9 +69,19 @@ def validate_setup(input_path: Path) -> tuple[Path, Path, Path]:
     return energy_model, osc_model, resolve_excite(os.environ.get("SHARC"))
 
 
-def run_stage(command: list[str], run_dir: Path, log_name: str, *, stdin=None) -> None:
+def run_stage(
+    command: list[str],
+    run_dir: Path,
+    log_name: str,
+    *,
+    stage_number: int,
+    stage_label: str,
+    stdin=None,
+) -> None:
     """Run one stage in its run directory and retain combined output in a log."""
-    with (run_dir / log_name).open("w", encoding="utf-8") as log:
+    log_path = (run_dir / log_name).resolve()
+    print(f"Starting stage {stage_number}/6: {stage_label}...", flush=True)
+    with log_path.open("w", encoding="utf-8") as log:
         subprocess.run(
             command,
             cwd=run_dir,
@@ -79,6 +90,10 @@ def run_stage(command: list[str], run_dir: Path, log_name: str, *, stdin=None) -
             stderr=subprocess.STDOUT,
             check=True,
         )
+    print(
+        f"Finished stage {stage_number}/6: {stage_label}.\nLog written to {log_path}\n",
+        flush=True,
+    )
 
 
 def _validate_final_output(run_dir: Path) -> Path:
@@ -88,6 +103,16 @@ def _validate_final_output(run_dir: Path) -> Path:
     if not output.read_text(encoding="utf-8").startswith("SHARC Initial conditions file"):
         raise RuntimeError("initconds.excited does not have a SHARC initial-conditions header.")
     return output
+
+
+def confirm_overwrite(run_dir: Path) -> bool:
+    """Ask whether an existing terminal workflow run may be replaced."""
+    print(f"Run directory already exists: {run_dir}")
+    try:
+        answer = input("Overwrite it and continue? [y/n]: ")
+    except EOFError:
+        return False
+    return answer.strip().lower() in {"y", "yes", "Y"}
 
 
 def run_workflow(
@@ -111,6 +136,7 @@ def run_workflow(
 
     stages = [
         (
+            "xTB relaxation/MD",
             [
                 sys.executable,
                 str(SCRIPT_DIR / "xtb_md.py"),
@@ -127,6 +153,7 @@ def run_workflow(
             "01_xtb_md.log",
         ),
         (
+            "energy prediction",
             [
                 sys.executable,
                 str(SCRIPT_DIR / "write_md_traj_with-energies.py"),
@@ -138,6 +165,7 @@ def run_workflow(
             "02_energies.log",
         ),
         (
+            "oscillator-strength prediction",
             [
                 sys.executable,
                 str(SCRIPT_DIR / "write_md_traj_with-energies-and-osc.py"),
@@ -149,6 +177,7 @@ def run_workflow(
             "03_oscillator_strengths.log",
         ),
         (
+            "initconds writing",
             [
                 sys.executable,
                 str(SCRIPT_DIR / "write_initconds.py"),
@@ -160,6 +189,7 @@ def run_workflow(
             "04_initconds.log",
         ),
         (
+            "excitation-input writing",
             [
                 sys.executable,
                 str(SCRIPT_DIR / "write_initconds-excited.py"),
@@ -171,11 +201,24 @@ def run_workflow(
             "05_excite_input.log",
         ),
     ]
-    for command, log_name in stages:
-        run_stage(command, run_dir, log_name)
+    for stage_number, (stage_label, command, log_name) in enumerate(stages, start=1):
+        run_stage(
+            command,
+            run_dir,
+            log_name,
+            stage_number=stage_number,
+            stage_label=stage_label,
+        )
 
     with (run_dir / "excite_inp.txt").open("r", encoding="utf-8") as excite_input:
-        run_stage([sys.executable, str(excite)], run_dir, "06_excite.log", stdin=excite_input)
+        run_stage(
+            [sys.executable, str(excite)],
+            run_dir,
+            "06_excite.log",
+            stage_number=6,
+            stage_label="SHARC state selection",
+            stdin=excite_input,
+        )
     return _validate_final_output(run_dir)
 
 
@@ -222,8 +265,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.temperature <= 0 or args.md_steps < 1 or args.md_timestep_fs <= 0 or args.save_interval < 1:
         parser.error("--temperature, --md-timestep-fs, and --save-interval must be positive; --md-steps must be at least 1")
     try:
+        input_path = args.input_xyz.expanduser().resolve()
+        validate_setup(input_path)
+        run_dir = input_path.with_name(f"{input_path.stem}_initconds")
+        if run_dir.exists():
+            if not run_dir.is_dir():
+                raise FileExistsError(f"Run path exists but is not a directory: {run_dir}")
+            if not confirm_overwrite(run_dir):
+                print(f"Cancelled. Existing run directory left unchanged: {run_dir}")
+                return 0
+            shutil.rmtree(run_dir)
         output = run_workflow(
-            args.input_xyz,
+            input_path,
             n_states=args.n_states,
             n_osc=args.n_osc,
             ewin_low=args.ewin_low,

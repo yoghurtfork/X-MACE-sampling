@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,7 +27,11 @@ class RunInitcondsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             input_path = Path(directory) / "molecule.xyz"
             input_path.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "ENERGY_MODEL and OSC_MODEL"):
+            with (
+                patch.object(run_initconds, "ENERGY_MODEL", "EDIT_ME: energy model"),
+                patch.object(run_initconds, "OSC_MODEL", "EDIT_ME: oscillator model"),
+                self.assertRaisesRegex(ValueError, "ENERGY_MODEL and OSC_MODEL"),
+            ):
                 run_initconds.validate_setup(input_path)
 
     def test_validation_requires_sharc_after_models_are_configured(self) -> None:
@@ -88,16 +94,18 @@ class RunInitcondsTests(unittest.TestCase):
                 patch.object(run_initconds, "resolve_excite", return_value=excite),
                 patch("sharc_initconds.run_initconds.subprocess.run", side_effect=fake_run),
             ):
-                output = run_initconds.run_workflow(input_path)
+                stdout = io.StringIO()
+                with redirect_stdout(stdout):
+                    output = run_initconds.run_workflow(input_path)
 
             run_dir = root / "molecule_initconds"
             self.assertEqual(output, run_dir / "initconds.excited")
             self.assertEqual(len(calls), 6)
-            self.assertEqual(calls[0][0], [sys.executable, str(run_initconds.SCRIPT_DIR / "xtb_md.py"), str(input_path)])
+            self.assertEqual(calls[0][0][:3], [sys.executable, str(run_initconds.SCRIPT_DIR / "xtb_md.py"), str(input_path)])
             self.assertIn(str(energy_model), calls[1][0])
             self.assertIn(str(osc_model), calls[2][0])
             self.assertEqual(calls[3][0][-4:], ["--n-states", "3", "--n-osc", "2"])
-            self.assertEqual(calls[4][0], [sys.executable, str(run_initconds.SCRIPT_DIR / "write_initconds-excited.py")])
+            self.assertEqual(calls[4][0][:2], [sys.executable, str(run_initconds.SCRIPT_DIR / "write_initconds-excited.py")])
             self.assertEqual(calls[5][0], [sys.executable, str(excite)])
             self.assertEqual([Path(call[1]["cwd"]) for call in calls], [run_dir] * 6)
             self.assertEqual(
@@ -106,16 +114,80 @@ class RunInitcondsTests(unittest.TestCase):
             )
             self.assertIsNone(calls[0][1]["stdin"])
             self.assertEqual(stdin_contents[5], "excite input")
+            lines = stdout.getvalue().splitlines()
+            labels = [
+                "xTB relaxation/MD",
+                "energy prediction",
+                "oscillator-strength prediction",
+                "initconds writing",
+                "excitation-input writing",
+                "SHARC state selection",
+            ]
+            log_names = [
+                "01_xtb_md.log",
+                "02_energies.log",
+                "03_oscillator_strengths.log",
+                "04_initconds.log",
+                "05_excite_input.log",
+                "06_excite.log",
+            ]
+            expected_progress = []
+            for stage_number, (label, log_name) in enumerate(zip(labels, log_names), start=1):
+                expected_progress.extend([
+                    f"Starting stage {stage_number}/6: {label}...",
+                    f"Finished stage {stage_number}/6: {label}. Log written to {run_dir / log_name}",
+                ])
+            self.assertEqual(lines, expected_progress)
 
-    def test_existing_run_directory_is_not_overwritten(self) -> None:
+    def test_main_overwrites_existing_run_directory_after_yes_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             input_path = root / "molecule.xyz"
             input_path.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
-            (root / "molecule_initconds").mkdir()
-            with patch.object(run_initconds, "validate_setup", return_value=(root / "energy", root / "osc", root / "excite")):
-                with self.assertRaisesRegex(FileExistsError, "Refusing to overwrite"):
-                    run_initconds.run_workflow(input_path)
+            run_dir = root / "molecule_initconds"
+            run_dir.mkdir()
+            old_artifact = run_dir / "old.log"
+            old_artifact.write_text("old run", encoding="utf-8")
+            output = run_dir / "initconds.excited"
+
+            def fake_workflow(path, **kwargs):
+                self.assertEqual(path, input_path)
+                self.assertFalse(run_dir.exists())
+                run_dir.mkdir()
+                output.write_text("SHARC Initial conditions file\n", encoding="utf-8")
+                return output
+
+            with (
+                patch.object(run_initconds, "validate_setup", return_value=(root / "energy", root / "osc", root / "excite")),
+                patch.object(run_initconds, "run_workflow", side_effect=fake_workflow),
+                patch("builtins.input", return_value="yes"),
+            ):
+                self.assertEqual(run_initconds.main([str(input_path)]), 0)
+
+            self.assertFalse(old_artifact.exists())
+            self.assertTrue(output.is_file())
+
+    def test_main_cancellation_keeps_existing_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "molecule.xyz"
+            input_path.write_text("1\nH\nH 0 0 0\n", encoding="utf-8")
+            run_dir = root / "molecule_initconds"
+            run_dir.mkdir()
+            old_artifact = run_dir / "old.log"
+            old_artifact.write_text("old run", encoding="utf-8")
+
+            for response in ("n", "", EOFError()):
+                with self.subTest(response=response):
+                    input_side_effect = response if isinstance(response, BaseException) else None
+                    with (
+                        patch.object(run_initconds, "validate_setup", return_value=(root / "energy", root / "osc", root / "excite")),
+                        patch.object(run_initconds, "run_workflow") as workflow,
+                        patch("builtins.input", side_effect=input_side_effect) if input_side_effect else patch("builtins.input", return_value=response),
+                    ):
+                        self.assertEqual(run_initconds.main([str(input_path)]), 0)
+                    workflow.assert_not_called()
+                    self.assertEqual(old_artifact.read_text(encoding="utf-8"), "old run")
 
     def test_stage_help_and_argument_validation_do_not_import_scientific_dependencies(self) -> None:
         scripts = [
