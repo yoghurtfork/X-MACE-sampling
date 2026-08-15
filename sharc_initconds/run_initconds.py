@@ -14,13 +14,15 @@ import sys
 from pathlib import Path
 
 
-# EDIT_ME: replace these values with trained X-MACE model paths.
-ENERGY_MODEL = "/home/lim_yt/X-MACE-sampling/outputs/base_models/base_model_azoflip.pt"
-OSC_MODEL = "/home/lim_yt/X-MACE-sampling/outputs/base_models/azobenzene_oscillator_strength.model"
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+# Paths are relative to this script, so the repository can be moved or cloned
+# anywhere. Replace these with other relative model paths if needed.
+ENERGY_MODEL = "../outputs/base_models/base_model_azoflip.pt"
+OSC_MODEL = "../outputs/base_models/azobenzene_oscillator_strength.model"
 
 N_STATES = 2
 N_OSC = 1
-SCRIPT_DIR = Path(__file__).resolve().parent
 
 
 def _is_placeholder(value: str) -> bool:
@@ -51,13 +53,13 @@ def validate_setup(input_path: Path) -> tuple[Path, Path, Path]:
             "Set ENERGY_MODEL and OSC_MODEL at the top of "
             "sharc_initconds/run_initconds.py before running."
         )
-    energy_model = Path(ENERGY_MODEL).expanduser()
-    osc_model = Path(OSC_MODEL).expanduser()
+    energy_model = (SCRIPT_DIR / Path(ENERGY_MODEL).expanduser()).resolve()
+    osc_model = (SCRIPT_DIR / Path(OSC_MODEL).expanduser()).resolve()
     if not energy_model.is_file():
         raise ValueError(f"ENERGY_MODEL does not exist: {energy_model}")
     if not osc_model.is_file():
         raise ValueError(f"OSC_MODEL does not exist: {osc_model}")
-    return energy_model.resolve(), osc_model.resolve(), resolve_excite(os.environ.get("SHARC"))
+    return energy_model, osc_model, resolve_excite(os.environ.get("SHARC"))
 
 
 def run_stage(command: list[str], run_dir: Path, log_name: str, *, stdin=None) -> None:
