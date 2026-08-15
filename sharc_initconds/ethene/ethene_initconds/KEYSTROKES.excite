@@ -1,0 +1,7 @@
+                                         #Use file "initconds"? [True] 
+                                         #How should the excited-state lists be generated? [3] 
+                                         #How should the excited states be flagged? [3] 
+9.0 10.5                                 #Range (eV): [0.0 10.0] 
+                                         #Do you want to include all states in the selection? [True] 
+1234                                     #RNG Seed:  [!] 
+                                         #Do you want to continue? [True] 

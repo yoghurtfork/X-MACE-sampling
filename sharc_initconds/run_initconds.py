@@ -21,8 +21,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 ENERGY_MODEL = "../outputs/base_models/base_model_run_33_fold_3.pt"
 OSC_MODEL = "../outputs/base_models/ethene_oscillator_strength.model"
 
-N_STATES = 2
-N_OSC = 1
+N_STATES = 3
+N_OSC = 2
 EWIN_LOW = 1.6
 EWIN_HIGH = 3.3
 TEMPERATURE = 300

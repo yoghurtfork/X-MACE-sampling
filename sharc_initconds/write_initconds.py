@@ -3,10 +3,31 @@
 from __future__ import annotations
 
 import argparse
+import math
 
 
 EV_TO_HA = 0.036749322
 VEL_CONV = 0.00448998
+
+
+def effective_transition_dipole(oscillator_strength: float, gap_ha: float) -> tuple[float, bool]:
+    """Return an x-directed effective dipole (a.u.) for SHARC selection.
+
+    SHARC's ``excite.py`` derives oscillator strengths from transition dipoles,
+    so an X-MACE oscillator-strength prediction must be represented by an
+    equivalent dipole magnitude. Negative predictions are treated as dark
+    transitions; non-finite values and non-positive excitation gaps are not
+    physically usable and therefore fail early.
+    """
+    if not math.isfinite(oscillator_strength):
+        raise ValueError(f"Oscillator strength must be finite; got {oscillator_strength!r}")
+    if not math.isfinite(gap_ha):
+        raise ValueError(f"Excitation gap must be finite; got {gap_ha!r}")
+    if gap_ha <= 0.0:
+        raise ValueError(f"Excitation gap must be positive; got {gap_ha:.8g} Ha")
+    if oscillator_strength <= 0.0:
+        return 0.0, oscillator_strength < 0.0
+    return math.sqrt(3.0 * oscillator_strength / (2.0 * gap_ha)), False
 
 
 def run(n_states: int, n_osc: int) -> None:
@@ -21,7 +42,10 @@ def run(n_states: int, n_osc: int) -> None:
     reference_energies = np.asarray(frames[0].info["REF_energy"]).ravel()
     if len(reference_energies) != n_states:
         raise ValueError(f"Energy trajectory contains {len(reference_energies)} states; expected {n_states}")
+    if not np.isfinite(reference_energies).all():
+        raise ValueError("Equilibrium-frame predicted state energies must all be finite.")
 
+    clamped_oscillators = 0
     with open("initconds", "w", encoding="utf-8") as output:
         output.write("SHARC Initial conditions file, version 4.0   <Excited>\n")
         output.write(f"Ninit     {len(frames) - 1}\n")
@@ -34,6 +58,10 @@ def run(n_states: int, n_osc: int) -> None:
             oscillator_strengths = np.asarray(frame.info["REF_osc-strength"]).ravel()
             if len(energies) != n_states or len(oscillator_strengths) != n_osc:
                 raise ValueError("Annotated trajectory does not match the requested state counts.")
+            if not np.isfinite(energies).all():
+                raise ValueError(f"Frame {index}: predicted state energies must all be finite.")
+            if not np.isfinite(oscillator_strengths).all():
+                raise ValueError(f"Frame {index}: predicted oscillator strengths must all be finite.")
             positions = frame.get_positions() / units.Bohr
             velocities = frame.get_velocities() * VEL_CONV
             kinetic = frame.get_kinetic_energy() / units.Hartree
@@ -55,8 +83,16 @@ def run(n_states: int, n_osc: int) -> None:
                 ground = float(energies[0]) * EV_TO_HA
                 gap = float(energies[state] - energies[0]) * EV_TO_HA
                 oscillator = 0.0 if state == 0 else float(oscillator_strengths[state - 1])
+                dipole_x = 0.0
+                if state > 0:
+                    try:
+                        dipole_x, clamped = effective_transition_dipole(oscillator, gap)
+                    except ValueError as error:
+                        raise ValueError(f"Frame {index}, state {state + 1}: {error}") from error
+                    clamped_oscillators += clamped
+                    oscillator = max(oscillator, 0.0)
                 output.write(
-                    f"{state + 1:03}    {energy:.8f} {ground:.8f}   0.00000000   0.00000000   "
+                    f"{state + 1:03}    {energy:.8f} {ground:.8f}   {dipole_x:.8f}   0.00000000   "
                     f"0.00000000   0.00000000   0.00000000   0.00000000   {gap:.8f}   {oscillator:.8f}\n"
                 )
             total = potential + kinetic
@@ -66,6 +102,7 @@ def run(n_states: int, n_osc: int) -> None:
                 f"Etot    {total:.8f} a.u.\n\n\n"
             )
     print(f"Written {len(frames) - 1} initial conditions + 1 equilibrium geometry to 'initconds'")
+    print(f"Clamped {clamped_oscillators} negative oscillator-strength predictions to zero")
 
 
 def main(argv: list[str] | None = None) -> int:
