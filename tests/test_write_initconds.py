@@ -58,10 +58,38 @@ class WriteInitcondsTests(unittest.TestCase):
             state_lines = (workdir / "initconds").read_text(encoding="utf-8").split("States\n", 1)[1].splitlines()
             s1_fields = state_lines[1].split()
             s2_fields = state_lines[2].split()
-            expected_dipole = math.sqrt(3.0 * 0.1 / (2.0 * 2.0 * write_initconds.EV_TO_HA))
+            expected_dipole = math.sqrt(3.0 * 0.1 / (2.0 * 2.0))
             self.assertAlmostEqual(float(s1_fields[3]), expected_dipole, places=7)
             self.assertEqual(s1_fields[4:9], ["0.00000000"] * 5)
             self.assertEqual(float(s2_fields[3]), 0.0)
+
+    def test_writer_without_oscillator_strengths_accepts_energy_only_frames(self) -> None:
+        from ase import Atoms
+        from ase.io import write
+
+        frames = []
+        for _ in range(2):
+            atoms = Atoms("H", positions=[[0.0, 0.0, 0.0]])
+            atoms.set_velocities([[0.0, 0.0, 0.0]])
+            atoms.info["REF_energy"] = [0.0, 0.2]
+            frames.append(atoms)
+
+        with tempfile.TemporaryDirectory() as directory:
+            workdir = Path(directory)
+            write(workdir / "md_traj_with-energies.xyz", frames)
+            previous_dir = Path.cwd()
+            try:
+                os.chdir(workdir)
+                write_initconds.run(
+                    n_states=2, n_osc=1, without_oscillator_strengths=True
+                )
+            finally:
+                os.chdir(previous_dir)
+
+            state_lines = (workdir / "initconds").read_text(encoding="utf-8").split("States\n", 1)[1].splitlines()
+            s1_fields = state_lines[1].split()
+            self.assertEqual(s1_fields[3:9], ["0.00000000"] * 6)
+            self.assertEqual(s1_fields[10], "0.00000000")
 
 
 if __name__ == "__main__":

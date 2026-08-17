@@ -6,7 +6,6 @@ import argparse
 import math
 
 
-EV_TO_HA = 0.036749322
 VEL_CONV = 0.00448998
 
 
@@ -30,13 +29,18 @@ def effective_transition_dipole(oscillator_strength: float, gap_ha: float) -> tu
     return math.sqrt(3.0 * oscillator_strength / (2.0 * gap_ha)), False
 
 
-def run(n_states: int, n_osc: int) -> None:
+def run(n_states: int, n_osc: int, *, without_oscillator_strengths: bool = False) -> None:
     import numpy as np
     from ase import units
     from ase.data import atomic_masses
     from ase.io import read
 
-    frames = read("md_traj_with-energies-and-osc.xyz", index=":")
+    input_filename = (
+        "md_traj_with-energies.xyz"
+        if without_oscillator_strengths
+        else "md_traj_with-energies-and-osc.xyz"
+    )
+    frames = read(input_filename, index=":")
     if len(frames) < 2:
         raise ValueError("Fewer than two MD frames are available.")
     reference_energies = np.asarray(frames[0].info["REF_energy"]).ravel()
@@ -55,8 +59,14 @@ def run(n_states: int, n_osc: int) -> None:
         output.write(f"States    {n_states} 0 0\n\n\nEquilibrium\n")
         for index, frame in enumerate(frames):
             energies = np.asarray(frame.info["REF_energy"]).ravel()
-            oscillator_strengths = np.asarray(frame.info["REF_osc-strength"]).ravel()
-            if len(energies) != n_states or len(oscillator_strengths) != n_osc:
+            oscillator_strengths = (
+                np.zeros(n_states - 1)
+                if without_oscillator_strengths
+                else np.asarray(frame.info["REF_osc-strength"]).ravel()
+            )
+            if len(energies) != n_states or (
+                not without_oscillator_strengths and len(oscillator_strengths) != n_osc
+            ):
                 raise ValueError("Annotated trajectory does not match the requested state counts.")
             if not np.isfinite(energies).all():
                 raise ValueError(f"Frame {index}: predicted state energies must all be finite.")
@@ -84,7 +94,7 @@ def run(n_states: int, n_osc: int) -> None:
                 gap = float(energies[state] - energies[0]) # * EV_TO_HA
                 oscillator = 0.0 if state == 0 else float(oscillator_strengths[state - 1])
                 dipole_x = 0.0
-                if state > 0:
+                if state > 0 and not without_oscillator_strengths:
                     try:
                         dipole_x, clamped = effective_transition_dipole(oscillator, gap)
                     except ValueError as error:
@@ -102,17 +112,31 @@ def run(n_states: int, n_osc: int) -> None:
                 f"Etot    {total:.8f} a.u.\n\n\n"
             )
     print(f"Written {len(frames) - 1} initial conditions + 1 equilibrium geometry to 'initconds'")
-    print(f"Clamped {clamped_oscillators} negative oscillator-strength predictions to zero")
+    if without_oscillator_strengths:
+        print("Wrote zero transition dipoles and oscillator strengths for explicit-state selection")
+    else:
+        print(f"Clamped {clamped_oscillators} negative oscillator-strength predictions to zero")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n-states", type=int, default=3)
     parser.add_argument("--n-osc", type=int, default=2)
+    parser.add_argument(
+        "--without-oscillator-strengths",
+        action="store_true",
+        help="read energy-only frames and write zero transition dipoles",
+    )
     args = parser.parse_args(argv)
-    if args.n_states < 2 or args.n_osc != args.n_states - 1:
+    if args.n_states < 2 or (
+        not args.without_oscillator_strengths and args.n_osc != args.n_states - 1
+    ):
         parser.error("--n-states must be >= 2 and --n-osc must equal --n-states minus one")
-    run(args.n_states, args.n_osc)
+    run(
+        args.n_states,
+        args.n_osc,
+        without_oscillator_strengths=args.without_oscillator_strengths,
+    )
     return 0
 
 

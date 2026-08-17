@@ -50,21 +50,32 @@ def resolve_excite(sharc: str | None) -> Path:
     return excite.resolve()
 
 
-def validate_setup(input_path: Path) -> tuple[Path, Path, Path]:
+def validate_setup(
+    input_path: Path, *, require_oscillator_model: bool = True
+) -> tuple[Path, Path | None, Path]:
     if input_path.suffix.lower() != ".xyz":
         raise ValueError(f"Input must be an XYZ file: {input_path}")
     if not input_path.is_file():
         raise ValueError(f"Input XYZ file does not exist: {input_path}")
-    if _is_placeholder(ENERGY_MODEL) or _is_placeholder(OSC_MODEL):
+    if _is_placeholder(ENERGY_MODEL):
+        raise ValueError(
+            "Set ENERGY_MODEL at the top of sharc_initconds/run_initconds.py "
+            "before running."
+        )
+    if require_oscillator_model and _is_placeholder(OSC_MODEL):
         raise ValueError(
             "Set ENERGY_MODEL and OSC_MODEL at the top of "
             "sharc_initconds/run_initconds.py before running."
         )
     energy_model = (SCRIPT_DIR / Path(ENERGY_MODEL).expanduser()).resolve()
-    osc_model = (SCRIPT_DIR / Path(OSC_MODEL).expanduser()).resolve()
+    osc_model = (
+        (SCRIPT_DIR / Path(OSC_MODEL).expanduser()).resolve()
+        if require_oscillator_model
+        else None
+    )
     if not energy_model.is_file():
         raise ValueError(f"ENERGY_MODEL does not exist: {energy_model}")
-    if not osc_model.is_file():
+    if osc_model is not None and not osc_model.is_file():
         raise ValueError(f"OSC_MODEL does not exist: {osc_model}")
     return energy_model, osc_model, resolve_excite(os.environ.get("SHARC"))
 
@@ -115,6 +126,18 @@ def confirm_overwrite(run_dir: Path) -> bool:
     return answer.strip().lower() in {"y", "yes", "Y"}
 
 
+def validate_specified_states(states: list[int] | None, n_states: int) -> None:
+    """Validate one-based SHARC excited-state indices, when supplied."""
+    if states is None:
+        return
+    invalid = [state for state in states if state < 2 or state > n_states]
+    if invalid:
+        raise ValueError(
+            "--specify-excited-states values must be excited-state indices "
+            f"from 2 through {n_states}; got: {' '.join(map(str, invalid))}"
+        )
+
+
 def run_workflow(
     input_path: Path,
     *,
@@ -126,9 +149,13 @@ def run_workflow(
     md_steps: int = MD_STEPS,
     md_timestep_fs: float = MD_TIMESTEP_FS,
     save_interval: int = SAVE_INTERVAL,
+    specified_states: list[int] | None = None,
 ) -> Path:
     input_path = input_path.expanduser().resolve()
-    energy_model, osc_model, excite = validate_setup(input_path)
+    validate_specified_states(specified_states, n_states)
+    energy_model, osc_model, excite = validate_setup(
+        input_path, require_oscillator_model=specified_states is None
+    )
     run_dir = input_path.with_name(f"{input_path.stem}_initconds")
     if run_dir.exists():
         raise FileExistsError(f"Refusing to overwrite existing run directory: {run_dir}")
@@ -136,6 +163,7 @@ def run_workflow(
 
     stages = [
         (
+            1,
             "xTB relaxation/MD",
             [
                 sys.executable,
@@ -153,6 +181,7 @@ def run_workflow(
             "01_xtb_md.log",
         ),
         (
+            2,
             "energy prediction",
             [
                 sys.executable,
@@ -165,18 +194,7 @@ def run_workflow(
             "02_energies.log",
         ),
         (
-            "oscillator-strength prediction",
-            [
-                sys.executable,
-                str(SCRIPT_DIR / "write_md_traj_with-energies-and-osc.py"),
-                "--model",
-                str(osc_model),
-                "--n-osc",
-                str(n_osc),
-            ],
-            "03_oscillator_strengths.log",
-        ),
-        (
+            4,
             "initconds writing",
             [
                 sys.executable,
@@ -185,23 +203,60 @@ def run_workflow(
                 str(n_states),
                 "--n-osc",
                 str(n_osc),
-            ],
+            ] + (["--without-oscillator-strengths"] if specified_states is not None else []),
             "04_initconds.log",
         ),
         (
+            5,
             "excitation-input writing",
             [
                 sys.executable,
                 str(SCRIPT_DIR / "write_initconds-excited.py"),
-                "--ewin-low",
-                str(ewin_low),
-                "--ewin-high",
-                str(ewin_high),
-            ],
+            ]
+            + (
+                ["--specified-states", *map(str, specified_states)]
+                if specified_states is not None
+                else ["--ewin-low", str(ewin_low), "--ewin-high", str(ewin_high)]
+            ),
             "05_excite_input.log",
         ),
     ]
-    for stage_number, (stage_label, command, log_name) in enumerate(stages, start=1):
+    if specified_states is None:
+        stages.insert(
+            2,
+            (
+                3,
+                "oscillator-strength prediction",
+                [
+                    sys.executable,
+                    str(SCRIPT_DIR / "write_md_traj_with-energies-and-osc.py"),
+                    "--model",
+                    str(osc_model),
+                    "--n-osc",
+                    str(n_osc),
+                ],
+                "03_oscillator_strengths.log",
+            ),
+        )
+    else:
+        stages.insert(
+            2,
+            (
+                3,
+                "oscillator-strength prediction",
+                None,
+                None,
+            ),
+        )
+
+    for stage_number, stage_label, command, log_name in stages:
+        if command is None:
+            print(
+                "Skipping stage 3/6: oscillator-strength prediction because initial "
+                "excited states were specified.",
+                flush=True,
+            )
+            continue
         run_stage(
             command,
             run_dir,
@@ -235,6 +290,13 @@ def main(argv: list[str] | None = None) -> int:
         help=f"number of oscillator strengths (default: {N_OSC})",
     )
     parser.add_argument(
+        "--specify-excited-states",
+        type=int,
+        nargs="+",
+        metavar="STATE",
+        help="select SHARC excited-state indices directly instead of using oscillator strengths",
+    )
+    parser.add_argument(
         "--ewin-low", type=float, default=EWIN_LOW,
         help=f"lower excitation-window bound in eV (default: {EWIN_LOW})",
     )
@@ -259,15 +321,21 @@ def main(argv: list[str] | None = None) -> int:
         help=f"trajectory save interval in MD steps (default: {SAVE_INTERVAL})",
     )
     args = parser.parse_args(argv)
-    if args.n_states < 2 or args.n_osc != args.n_states - 1:
+    if args.n_states < 2 or (
+        args.specify_excited_states is None and args.n_osc != args.n_states - 1
+    ):
         parser.error("--n-states must be >= 2 and --n-osc must equal --n-states minus one")
-    if args.ewin_low >= args.ewin_high:
+    if args.specify_excited_states is None and args.ewin_low >= args.ewin_high:
         parser.error("--ewin-low must be lower than --ewin-high")
     if args.temperature <= 0 or args.md_steps < 1 or args.md_timestep_fs <= 0 or args.save_interval < 1:
         parser.error("--temperature, --md-timestep-fs, and --save-interval must be positive; --md-steps must be at least 1")
     try:
         input_path = args.input_xyz.expanduser().resolve()
-        validate_setup(input_path)
+        validate_specified_states(args.specify_excited_states, args.n_states)
+        validate_setup(
+            input_path,
+            require_oscillator_model=args.specify_excited_states is None,
+        )
         run_dir = input_path.with_name(f"{input_path.stem}_initconds")
         if run_dir.exists():
             if not run_dir.is_dir():
@@ -286,6 +354,7 @@ def main(argv: list[str] | None = None) -> int:
             md_steps=args.md_steps,
             md_timestep_fs=args.md_timestep_fs,
             save_interval=args.save_interval,
+            specified_states=args.specify_excited_states,
         )
     except (ValueError, FileExistsError, subprocess.CalledProcessError, RuntimeError) as error:
         parser.error(str(error))
