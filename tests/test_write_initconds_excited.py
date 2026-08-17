@@ -25,7 +25,7 @@ class WriteExcitedInputTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
                 (Path(directory) / "excite_inp.txt").read_text(encoding="utf-8"),
-                "\n\n2\n-inf inf\n2 3\n",
+                "\n\n2\n-inf inf\n2 3\n\n",
             )
 
     def test_specified_states_reject_non_positive_indices(self) -> None:

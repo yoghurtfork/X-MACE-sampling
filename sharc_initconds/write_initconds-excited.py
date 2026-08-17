@@ -26,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.specified_states is None:
             output.write(f"\n\n\n{args.ewin_low} {args.ewin_high}\n\n{args.seed}\n\n")
         else:
-            output.write(f"\n\n2\n-inf inf\n{' '.join(map(str, args.specified_states))}\n")
+            output.write(f"\n\n2\n-inf inf\n{' '.join(map(str, args.specified_states))}\n\n")
     print("excite_inp.txt written")
     return 0
 

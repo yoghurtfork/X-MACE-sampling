@@ -160,7 +160,7 @@ class RunInitcondsTests(unittest.TestCase):
                 cwd = Path(kwargs["cwd"])
                 if len(calls) == 2:
                     (cwd / "excite_inp.txt").write_text(
-                        "\n\n2\n-inf inf\n2\n", encoding="utf-8"
+                        "\n\n2\n-inf inf\n2\n\n", encoding="utf-8"
                     )
                 if len(calls) == 3:
                     (cwd / "initconds.excited").write_text(
@@ -198,7 +198,7 @@ class RunInitcondsTests(unittest.TestCase):
             self.assertNotIn("write_md_traj_with-energies-and-osc.py", " ".join(map(str, calls)))
             self.assertIn("--without-oscillator-strengths", calls[2][0])
             self.assertEqual(calls[3][0][-2:], ["--specified-states", "2"])
-            self.assertEqual(stdin_contents[4], "\n\n2\n-inf inf\n2\n")
+            self.assertEqual(stdin_contents[4], "\n\n2\n-inf inf\n2\n\n")
             self.assertFalse((run_dir / "03_oscillator_strengths.log").exists())
             lines = stdout.getvalue().splitlines()
             self.assertIn(
