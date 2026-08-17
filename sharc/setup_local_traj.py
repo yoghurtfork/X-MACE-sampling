@@ -89,7 +89,14 @@ def write_trajectory(path: Path, atoms: list[str], state: int, rngseed: int, ere
         fields = line.split()
         if len(fields) < 9:
             raise ValueError(f"Malformed atom record: {line}")
-        geom.append(line[:60].rstrip())
+        # SHARC's geom file contains symbol, atomic number, Cartesian position,
+        # and mass only.  Do not slice by character position: long coordinate
+        # fields can otherwise leak a partial velocity into the geometry record.
+        # Match SHARC's conventional fixed-width geometry-table layout.
+        geom.append(
+            "%2s %5.1f %12.8f %12.8f %12.8f %12.8f"
+            % (fields[0], *(float(value) for value in fields[1:6]))
+        )
         veloc.append("% 12.8f % 12.8f % 12.8f" % tuple(float(x) for x in fields[-3:]))
     (path / "geom").write_text("\n".join(geom) + "\n", encoding="utf-8")
     (path / "veloc").write_text("\n".join(veloc) + "\n", encoding="utf-8")
