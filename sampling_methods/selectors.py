@@ -14,6 +14,7 @@ def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
         - "dbscan"
         - "dbscan_weighted"
         - "uniform_grid"
+        - "stratified_sampling"
     """
     if selector_type == "farthest_point_sampling":
         return farthest_point_sampling(descriptor_matrix, n_to_select, **kwargs)
@@ -33,10 +34,12 @@ def get_selector(selector_type, descriptor_matrix, n_to_select, **kwargs):
         return dbscan_weighted(descriptor_matrix, n_to_select, **kwargs)
     elif selector_type == "uniform_grid":
         return uniform_grid_sampling(descriptor_matrix, n_to_select, **kwargs)
+    elif selector_type == "stratified_sampling":
+        return stratified_sampling(descriptor_matrix, n_to_select, **kwargs)
     else:
         raise ValueError(
             f"Unknown selector type: {selector_type}. "
-            f"Supported types: 'farthest_point_sampling', 'random_sampling', 'k_means_clustering', 'k_means_clustering_weighted', 'birch', 'birch_weighted', 'dbscan', 'dbscan_weighted', 'uniform_grid'"
+            f"Supported types: 'farthest_point_sampling', 'random_sampling', 'k_means_clustering', 'k_means_clustering_weighted', 'birch', 'birch_weighted', 'dbscan', 'dbscan_weighted', 'uniform_grid', 'stratified_sampling'"
         )
 
 def random_sampling(descriptor_matrix, n_to_select):
@@ -49,6 +52,77 @@ def random_sampling(descriptor_matrix, n_to_select):
             f"n_to_select ({n_to_select}) cannot be greater than the number of options ({options})."
         )
     return np.random.choice(options, size=n_to_select, replace=False)
+
+
+def stratified_sampling(
+    descriptor_matrix,
+    n_to_select,
+    top_fraction=0.2,
+    middle_fraction=0.3,
+    bottom_fraction=0.5,
+    top_n=50,
+    middle_n=30,
+    bottom_n=20,
+    random_state=None,
+):
+    """Sample separately from top, middle, and bottom descriptor-score strata.
+
+    A geometry's score is its maximum descriptor value, which lets a large
+    Hessian norm on any electronic state place it in a high-curvature stratum.
+    The sorted dataset is partitioned into non-overlapping top, middle, and
+    bottom pools, then sampled uniformly within each pool without replacement.
+    """
+    descriptor_matrix = np.asarray(descriptor_matrix, dtype=float)
+    if descriptor_matrix.ndim != 2:
+        raise ValueError("stratified_sampling requires a two-dimensional descriptor matrix.")
+    if descriptor_matrix.shape[0] == 0 or descriptor_matrix.shape[1] == 0:
+        raise ValueError("stratified_sampling requires a non-empty descriptor matrix.")
+    if not np.isfinite(descriptor_matrix).all():
+        raise ValueError("stratified_sampling requires finite descriptor values.")
+
+    fractions = np.asarray(
+        [top_fraction, middle_fraction, bottom_fraction], dtype=float
+    )
+    if np.any(fractions < 0) or not np.isclose(fractions.sum(), 1.0):
+        raise ValueError("top_fraction, middle_fraction, and bottom_fraction must sum to 1.")
+
+    quotas = np.asarray([top_n, middle_n, bottom_n])
+    if (
+        not np.issubdtype(quotas.dtype, np.integer)
+        or np.any(quotas < 0)
+    ):
+        raise ValueError("top_n, middle_n, and bottom_n must be non-negative integers.")
+    if not isinstance(n_to_select, (int, np.integer)) or n_to_select < 0:
+        raise ValueError("n_to_select must be a non-negative integer.")
+    if n_to_select != int(quotas.sum()):
+        raise ValueError("n_to_select must equal top_n + middle_n + bottom_n.")
+
+    n_geometries = descriptor_matrix.shape[0]
+    raw_sizes = fractions * n_geometries
+    stratum_sizes = np.floor(raw_sizes).astype(int)
+    remaining = n_geometries - stratum_sizes.sum()
+    for stratum in np.argsort(-(raw_sizes - stratum_sizes), kind="stable")[:remaining]:
+        stratum_sizes[stratum] += 1
+    if np.any(quotas > stratum_sizes):
+        raise ValueError(
+            "Requested stratum sample count exceeds the number of geometries in that stratum."
+        )
+
+    scores = np.max(descriptor_matrix, axis=1)
+    ranked_indices = np.argsort(-scores, kind="stable")
+    top_end = stratum_sizes[0]
+    middle_end = top_end + stratum_sizes[1]
+    strata = (
+        ranked_indices[:top_end],
+        ranked_indices[top_end:middle_end],
+        ranked_indices[middle_end:],
+    )
+
+    rng = np.random.default_rng(random_state)
+    selected = np.concatenate(
+        [rng.choice(pool, size=quota, replace=False) for pool, quota in zip(strata, quotas)]
+    )
+    return rng.permutation(selected)
 
 def farthest_point_sampling(descriptor_matrix, n_to_select, initialize=0):
     """   
