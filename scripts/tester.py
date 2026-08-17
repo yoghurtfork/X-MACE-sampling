@@ -267,6 +267,14 @@ def run_config(
                         .tolist()
                     )
             descriptor_matrix = np.asarray(encoded_rows)
+        elif descriptor_name == "hessian_norm":
+            descriptor_matrix = np.asarray(
+                descriptors.get_descriptor(
+                    descriptor_name,
+                    base_train_atoms,
+                    **descriptor_kwargs,
+                )
+            )
         else:
             descriptor_matrix = np.asarray(
                 [

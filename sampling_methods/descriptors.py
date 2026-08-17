@@ -75,6 +75,7 @@ def get_descriptor(descriptor_type, atoms, encoder=None, force_weight=1.0, energ
         - "acsf": ACSF descriptor using the DScribe library
         - "mbtr": MBTR descriptor using the DScribe library
         - "ci_score": score which qualifies how close the geometry is to a conical intersection
+        - "hessian_norm": dataset-level Hessian Frobenius norm for every energy state
     """
     if descriptor_type == "bond_lengths":
         return get_bond_lengths(atoms)
@@ -94,10 +95,12 @@ def get_descriptor(descriptor_type, atoms, encoder=None, force_weight=1.0, energ
         return get_encoded_energies(atoms, encoder)
     elif descriptor_type == "ci_score":
         return get_ci_score(atoms, force_weight, energy_weight)
+    elif descriptor_type == "hessian_norm":
+        return get_hessian_norm(atoms)
     else:
         raise ValueError(
             f"Unknown descriptor type: {descriptor_type}. "
-            f"Supported types: 'bond_lengths', 'bond_angles', 'soap', 'acsf', 'mbtr', 'energies', 'encoded_energies', 'ci_score'"
+            f"Supported types: 'bond_lengths', 'bond_angles', 'soap', 'acsf', 'mbtr', 'energies', 'encoded_energies', 'ci_score', 'hessian_norm'"
         )
 
 def _get_bond_graph(atoms):
@@ -199,6 +202,104 @@ def get_bond_angles(atoms):
 def get_energies(atoms):
     """Return the energies of the ASE Atoms object."""
     return atoms.info["REF_energy"][0]
+
+
+def get_hessian_norm(atoms_list):
+    """Return the Hessian Frobenius norm for every geometry and energy state.
+
+    The descriptor is evaluated over the complete energy surface spanned by
+    the first C--C bond length and the alkene dihedral. Both coordinates are
+    normalised to [0, 1] before finite differences are taken, so changes over
+    the full bond-length and dihedral scans are weighted equally. The result
+    has shape ``(n_geometries, n_states)``; each column corresponds to the
+    matching entry of ``REF_energy``.
+
+    ``atoms_list`` must form a complete rectangular bond-length/dihedral grid.
+    Repeated grid points are averaged before differentiation and receive the
+    same descriptor row on output.
+    """
+    atoms_list = list(atoms_list)
+    if not atoms_list:
+        raise ValueError("hessian_norm requires at least one geometry.")
+
+    bond_lengths = np.asarray(
+        [get_bond_lengths(atoms)[0] for atoms in atoms_list], dtype=float
+    )
+    dihedrals = np.asarray(
+        [get_dihedral(atoms)[0] for atoms in atoms_list], dtype=float
+    )
+
+    energy_rows = [
+        np.asarray(atoms.info["REF_energy"], dtype=float).reshape(-1)
+        for atoms in atoms_list
+    ]
+    state_counts = {len(energies) for energies in energy_rows}
+    if len(state_counts) != 1:
+        raise ValueError(
+            "hessian_norm requires every geometry to provide the same number "
+            "of electronic states."
+        )
+    n_states = state_counts.pop()
+    if n_states == 0:
+        raise ValueError("hessian_norm requires at least one energy state.")
+    energies = np.vstack(energy_rows)
+
+    rounded_bonds = np.round(bond_lengths, 8)
+    rounded_dihedrals = np.round(dihedrals, 8)
+    bond_grid = np.unique(rounded_bonds)
+    dihedral_grid = np.unique(rounded_dihedrals)
+    if len(bond_grid) < 3 or len(dihedral_grid) < 3:
+        raise ValueError(
+            "hessian_norm requires at least three unique bond lengths and "
+            "three unique dihedral angles."
+        )
+
+    bond_index = np.searchsorted(bond_grid, rounded_bonds)
+    dihedral_index = np.searchsorted(dihedral_grid, rounded_dihedrals)
+    totals = np.zeros((len(dihedral_grid), len(bond_grid), n_states), dtype=float)
+    counts = np.zeros((len(dihedral_grid), len(bond_grid)), dtype=int)
+    np.add.at(totals, (dihedral_index, bond_index), energies)
+    np.add.at(counts, (dihedral_index, bond_index), 1)
+    if np.any(counts == 0):
+        raise ValueError(
+            "hessian_norm requires a complete rectangular bond-length/dihedral grid."
+        )
+    energy_grid = totals / counts[..., np.newaxis]
+
+    dihedral_radians = np.deg2rad(dihedral_grid)
+    bond_coordinate = (bond_grid - bond_grid.min()) / np.ptp(bond_grid)
+    dihedral_coordinate = (
+        (dihedral_radians - dihedral_radians.min()) / np.ptp(dihedral_radians)
+    )
+
+    hessian_norm_grid = np.empty_like(energy_grid)
+    for state in range(n_states):
+        energy_theta, energy_bond = np.gradient(
+            energy_grid[..., state],
+            dihedral_coordinate,
+            bond_coordinate,
+            edge_order=2,
+        )
+        energy_theta_theta, energy_theta_bond = np.gradient(
+            energy_theta,
+            dihedral_coordinate,
+            bond_coordinate,
+            edge_order=2,
+        )
+        energy_bond_theta, energy_bond_bond = np.gradient(
+            energy_bond,
+            dihedral_coordinate,
+            bond_coordinate,
+            edge_order=2,
+        )
+        energy_theta_bond = 0.5 * (energy_theta_bond + energy_bond_theta)
+        hessian_norm_grid[..., state] = np.sqrt(
+            energy_theta_theta**2
+            + 2 * energy_theta_bond**2
+            + energy_bond_bond**2
+        )
+
+    return hessian_norm_grid[dihedral_index, bond_index]
 
 
 def get_ci_score(atoms, force_weight=1.0, energy_weight=1.0):
