@@ -13,7 +13,7 @@ def run(model: Path, n_states: int, n_frames: int) -> None:
 
     write("md_trajectory.xyz", read("md_trajectory.traj", index=":"))
     atoms_list = read("md_trajectory.xyz", index=f"0:{n_frames}")
-    calculator = MACECalculator(model_paths=str(model), n_energies=n_states, device="cpu")
+    calculator = MACECalculator(model_paths=str(model), n_energies=n_states, device="cuda")
     all_energies = []
     for atoms in atoms_list:
         calculator.calculate(atoms)

@@ -19,13 +19,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Paths are relative to this script, so the repository can be moved or cloned
 # anywhere. Replace these with other relative model paths if needed.
-ENERGY_MODEL = "../outputs/base_models/base_model_run_33_fold_3.pt"
-OSC_MODEL = "../outputs/base_models/ethene_oscillator_strength.model"
+ENERGY_MODEL = "../outputs/base_models/base_model_azoflip.pt"
+OSC_MODEL = "../outputs/osc_strength_models/osc_strength_azobenzene.model"
 
-N_STATES = 3
-N_OSC = 2
-EWIN_LOW = 1.6
-EWIN_HIGH = 3.3
+N_STATES = 2
+N_OSC = 1
+EWIN_LOW = 0
+EWIN_HIGH = 20
 TEMPERATURE = 300
 MD_STEPS = 1010
 MD_TIMESTEP_FS = 1

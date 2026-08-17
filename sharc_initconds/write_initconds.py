@@ -50,7 +50,7 @@ def run(n_states: int, n_osc: int) -> None:
         output.write("SHARC Initial conditions file, version 4.0   <Excited>\n")
         output.write(f"Ninit     {len(frames) - 1}\n")
         output.write(f"Natom     {len(frames[0])}\nRepr      MCH\n")
-        output.write(f"Eref         {reference_energies[0] * EV_TO_HA:.10f}\n")
+        output.write(f"Eref         {reference_energies[0]:.10f}\n")
         output.write("Eharm           0.0000000000\n")
         output.write(f"States    {n_states} 0 0\n\n\nEquilibrium\n")
         for index, frame in enumerate(frames):
@@ -65,7 +65,7 @@ def run(n_states: int, n_osc: int) -> None:
             positions = frame.get_positions() / units.Bohr
             velocities = frame.get_velocities() * VEL_CONV
             kinetic = frame.get_kinetic_energy() / units.Hartree
-            potential = (reference_energies[0] - energies[0]) * EV_TO_HA
+            potential = (reference_energies[0] - energies[0]) # * EV_TO_HA
             atom_lines = [
                 f"{atom.symbol} {atom.number:.1f} {position[0]:.8f} {position[1]:.8f} {position[2]:.8f} "
                 f"{atomic_masses[atom.number]:.8f} {velocity[0]:.8f} {velocity[1]:.8f} {velocity[2]:.8f}\n"
@@ -79,9 +79,9 @@ def run(n_states: int, n_osc: int) -> None:
             output.writelines(atom_lines)
             output.write("States\n")
             for state in range(n_states):
-                energy = float(energies[state]) * EV_TO_HA
-                ground = float(energies[0]) * EV_TO_HA
-                gap = float(energies[state] - energies[0]) * EV_TO_HA
+                energy = float(energies[state]) # * EV_TO_HA
+                ground = float(energies[0]) # * EV_TO_HA
+                gap = float(energies[state] - energies[0]) # * EV_TO_HA
                 oscillator = 0.0 if state == 0 else float(oscillator_strengths[state - 1])
                 dipole_x = 0.0
                 if state > 0:

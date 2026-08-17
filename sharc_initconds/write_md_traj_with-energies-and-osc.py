@@ -12,7 +12,7 @@ def run(model: Path, n_osc: int) -> None:
     from mace.calculators import MACECalculator
 
     atoms_list = read("md_traj_with-energies.xyz", index=":")
-    calculator = MACECalculator(model_paths=str(model), n_energies=n_osc, device="cpu")
+    calculator = MACECalculator(model_paths=str(model), n_energies=n_osc, device="cuda")
     all_osc = []
     for atoms in atoms_list:
         calculator.calculate(atoms)
