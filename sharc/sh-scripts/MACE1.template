@@ -1,1 +1,4 @@
 model_file ../../../../outputs/base_models/base_model_azoflip.pt
+device cuda
+energy_unit Hartree
+distance_unit Ang
