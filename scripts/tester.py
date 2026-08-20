@@ -26,14 +26,14 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts.helper import (
     BATCH_SIZE, DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEVICE,
     MAX_EPOCHS, R_MAX, SEED, TRANSFER_LR, VALIDATION_FRACTION,
-    _e0s_from_config, _e0s_from_metadata, _evaluate,
+    _apply_training_strategy, _e0s_from_config, _e0s_from_metadata, _evaluate,
     _import_project_modules, _load_model, _next_run_dir, _path, _read_atoms,
     _required, _save_epoch_mae_plot, _save_fold_selection_plot,
     _save_loss_plot, _save_mae_plot, _save_pca_selection_plots,
     _save_selection_plot, _save_split_plot, _train_k_fold_models,
     _save_model,
     _trainer_options_for_learning_rate, _trainer_options_from_config,
-    _validate_device, _write_json, seed_everything,
+    _strategy_from_config, _validate_device, _write_json, seed_everything,
 )
 
 
@@ -64,6 +64,7 @@ def run_config(
             "tester.py only runs transfer-learning configurations; "
             "use base_full_trainer.py when 'transfer_learning' is false"
         )
+    strategy = _strategy_from_config(config)
 
     if run_dir is None:
         run_dir = _next_run_dir(output_dir)
@@ -355,7 +356,7 @@ def run_config(
         )
 
         if cross_validation:
-            transfer_initial_model = NaiveStrategy().apply(base_model)
+            transfer_initial_model = base_model
 
             def checkpoint_transfer_fold(snapshot: dict[str, Any]) -> None:
                 result.update(
@@ -411,6 +412,7 @@ def run_config(
                 energy_key=str(config.get("energy_key", "REF_energy")),
                 forces_key=str(config.get("forces_key", "REF_forces")),
                 e0s=full_e0s,
+                strategy=strategy,
                 on_fold_complete=checkpoint_transfer_fold,
                 on_checkpoint=checkpoint_transfer_fold,
             )
@@ -530,11 +532,11 @@ def run_config(
         transfer_valid_loader = full_data_builder.load(
             transfer_valid_atoms, batch_size=batch_size, shuffle=False
         )
-        transfer_model = NaiveStrategy().apply(base_model)
         transfer_model_path = (run_dir / "transfer_model.pt").resolve()
         seed_everything(seed)
         started_at = time.time()
         try:
+            transfer_model = _apply_training_strategy(base_model, strategy).to(device)
             transfer_model, transfer_history = trainer.train_model(
                 transfer_model,
                 transfer_train_loader,

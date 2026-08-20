@@ -38,6 +38,33 @@ TRANSFER_LR = 5.0e-4
 SCRATCH_LR = 1.0e-3
 DEVICE = "cpu"
 VALIDATION_FRACTION = 0.1
+
+
+def _strategy_from_config(config: dict[str, Any]) -> str:
+    """Return the configured model-training strategy."""
+    strategy = config.get("strategy", "naive")
+    if not isinstance(strategy, str):
+        raise ValueError("'strategy' must be a JSON string")
+    if strategy not in {"naive", "freeze"}:
+        raise ValueError("'strategy' must be either 'naive' or 'freeze'")
+    return strategy
+
+
+def _apply_training_strategy(
+    model: torch.nn.Module, strategy: str
+) -> torch.nn.Module:
+    """Copy a model and apply the requested X-MACE training strategy."""
+    from mace.training.strategies import FreezeStrategy, NaiveStrategy
+
+    if strategy == "naive":
+        return NaiveStrategy().apply(model)
+    if strategy == "freeze":
+        return FreezeStrategy(
+            frozen_layers=("node_embedding", "interactions")
+        ).apply(model)
+    raise ValueError("'strategy' must be either 'naive' or 'freeze'")
+
+
 def seed_everything(TORCH_SEED):
     random.seed(TORCH_SEED)
     os.environ['PYTHONHASHSEED'] = str(TORCH_SEED)
@@ -793,6 +820,7 @@ def _train_k_fold_models(
     energy_key: str,
     forces_key: str,
     e0s: dict[str, float] | None,
+    strategy: str = "naive",
     on_fold_complete: Callable[[dict[str, Any]], None] | None = None,
     on_checkpoint: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
@@ -845,6 +873,7 @@ def _train_k_fold_models(
             ),
         )
         try:
+            fold_model = _apply_training_strategy(fold_model, strategy).to(device)
             fold_model, history = trainer.train_model(
                 fold_model, train_loader, valid_loader, loss_fn
             )
@@ -1140,6 +1169,7 @@ def _train_model(
     preset: str,
     load_base: str | None,
     e0s: dict[str, float] | None,
+    strategy: str = "naive",
     model_path: Path | None = None,
     on_checkpoint: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
@@ -1170,6 +1200,7 @@ def _train_model(
     )
     started_at = time.time()
     try:
+        model = _apply_training_strategy(model, strategy).to(device)
         model, history = trainer.train_model(
             model, train_loader, valid_loader, loss_fn
         )

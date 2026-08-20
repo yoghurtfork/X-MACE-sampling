@@ -10,6 +10,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import torch
+
 from scripts import job_controller
 from scripts import single_trainer
 from scripts import helper
@@ -262,12 +264,8 @@ class AutomaticE0Tests(unittest.TestCase):
                 "Metadata", (), {"atomic_numbers": [1], "atomic_energies": [-0.5]}
             )()
 
-    class _Model:
-        def to(self, device):
-            return self
-
-        def cpu(self):
-            return self
+    class _Model(torch.nn.Module):
+        pass
 
     class _Trainer:
         def __init__(self, **kwargs):
@@ -398,6 +396,39 @@ class TrainingCheckpointTests(unittest.TestCase):
                 )
 
         self.assertTrue(save_model.called)
+
+
+class TrainingStrategyTests(unittest.TestCase):
+    class _Model(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.node_embedding = torch.nn.Linear(1, 1)
+            self.interactions = torch.nn.ModuleList([torch.nn.Linear(1, 1)])
+            self.readouts = torch.nn.Linear(1, 1)
+
+    def test_strategy_defaults_to_naive_and_rejects_invalid_values(self) -> None:
+        self.assertEqual(helper._strategy_from_config({}), "naive")
+        with self.assertRaisesRegex(ValueError, "JSON string"):
+            helper._strategy_from_config({"strategy": False})
+        with self.assertRaisesRegex(ValueError, "naive.*freeze"):
+            helper._strategy_from_config({"strategy": "invalid"})
+
+    def test_freeze_strategy_freezes_requested_layers_only(self) -> None:
+        model = self._Model()
+        transformed = helper._apply_training_strategy(model, "freeze")
+
+        self.assertTrue(all(
+            not parameter.requires_grad
+            for parameter in transformed.node_embedding.parameters()
+        ))
+        self.assertTrue(all(
+            not parameter.requires_grad
+            for parameter in transformed.interactions.parameters()
+        ))
+        self.assertTrue(all(
+            parameter.requires_grad
+            for parameter in transformed.readouts.parameters()
+        ))
 
 
 if __name__ == "__main__":
