@@ -1,6 +1,7 @@
 {
   "ignore": true,
   "transfer_learning": false,
+  "strategy": "naive",
   "run": "both",
   "cross_validation": true,
   "k": 2,
