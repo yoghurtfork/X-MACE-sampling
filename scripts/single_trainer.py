@@ -21,7 +21,7 @@ from scripts.helper import (
     _e0s_from_config, _e0s_from_metadata, _import_project_modules, _is_scratch_config,
     _next_run_dir, _path, _read_atoms, _required, _save_epoch_mae_plot,
     _save_fold_selection_plot, _save_loss_plot, _train_k_fold_models,
-    _train_model, _strategy_from_config, _trainer_options_from_config, _validate_device, _write_json,
+    _train_model, _strategy_from_config, _strategy_kwargs_from_config, _trainer_options_from_config, _validate_device, _write_json,
     seed_everything,
 )
 
@@ -113,6 +113,7 @@ def run_config(config_path: Path, output_dir: Path, run_dir: Path | None = None)
         device = _validate_device(str(config.get("device", DEVICE)))
         e0s = _e0s_from_config(config, stage["e0_key"])
         strategy = _strategy_from_config(config)
+        strategy_kwargs = _strategy_kwargs_from_config(config, strategy)
         trainer_options = _trainer_options_from_config(config)
         preset = config.get("preset", "default_ani")
         if not isinstance(preset, str) or not preset:
@@ -158,6 +159,7 @@ def run_config(config_path: Path, output_dir: Path, run_dir: Path | None = None)
                 learning_rate=learning_rate, trainer_options=trainer_options,
                 energy_key=energy_key, forces_key=forces_key, e0s=e0s,
                 strategy=strategy,
+                strategy_kwargs=strategy_kwargs,
                 on_fold_complete=checkpoint,
                 on_checkpoint=checkpoint,
             )
@@ -177,7 +179,7 @@ def run_config(config_path: Path, output_dir: Path, run_dir: Path | None = None)
                 })
                 _write_json(result_path, result)
 
-            model_run = _train_model(train_atoms=[atoms[i] for i in train_indices], valid_atoms=[atoms[i] for i in valid_indices], test_atoms=test_atoms, builder_class=AtomDataLoaderBuilder, trainer_class=Trainer, initialise_autoencoder=initialise_autoencoder, tester=tester, loss_fn=loss_fn, device=device, seed=seed, r_max=r_max, batch_size=batch_size, max_epochs=stage_epochs, learning_rate=learning_rate, trainer_options=trainer_options, energy_key=energy_key, forces_key=forces_key, preset=preset, load_base=load_base, e0s=e0s, strategy=strategy, model_path=model_path, on_checkpoint=checkpoint_model)
+            model_run = _train_model(train_atoms=[atoms[i] for i in train_indices], valid_atoms=[atoms[i] for i in valid_indices], test_atoms=test_atoms, builder_class=AtomDataLoaderBuilder, trainer_class=Trainer, initialise_autoencoder=initialise_autoencoder, tester=tester, loss_fn=loss_fn, device=device, seed=seed, r_max=r_max, batch_size=batch_size, max_epochs=stage_epochs, learning_rate=learning_rate, trainer_options=trainer_options, energy_key=energy_key, forces_key=forces_key, preset=preset, load_base=load_base, e0s=e0s, strategy=strategy, strategy_kwargs=strategy_kwargs, model_path=model_path, on_checkpoint=checkpoint_model)
             artifacts = {"loss_plot": _save_loss_plot(run_dir, model_run["history"], title=f"{stage['label'].title()} model", filename=f"{stage['model_prefix']}_loss.png"), "validation_mae_plot": _save_epoch_mae_plot(run_dir, model_run["history"], title=f"{stage['label'].title()} model validation MAE", filename=f"{stage['model_prefix']}_validation_mae.png")}
             result.update({"status": "completed", "config": config, "transfer_learning": False, "cross_validation": False, "seed": seed, "device": str(device), "E0s": {stage["size_key"]: model_run["E0s"]}, "trainer_options": trainer_options, "model_initialization": {"preset": preset, "load_base": load_base}, "dataset_sizes": {stage["size_key"]: len(atoms), f"{stage['size_key']}_test": len(test_atoms), "train": len(train_indices), "validation": len(valid_indices)}, "train_indices": train_indices, "validation_indices": valid_indices, "metrics": {stage["model_key"]: model_run["metrics"]}, "scratch_training": {stage["model_key"]: {key: value for key, value in model_run.items() if key != "model"}}, "models": {stage["model_key"]: str(model_path)}, "artifacts": artifacts})
         _write_json(result_path, result)

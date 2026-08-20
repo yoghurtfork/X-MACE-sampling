@@ -50,18 +50,58 @@ def _strategy_from_config(config: dict[str, Any]) -> str:
     return strategy
 
 
+def _strategy_kwargs_from_config(
+    config: dict[str, Any], strategy: str
+) -> dict[str, Any]:
+    """Return validated JSON keyword arguments for a training strategy."""
+    strategy_kwargs = config.get("strategy_kwargs", {})
+    if not isinstance(strategy_kwargs, dict):
+        raise ValueError("'strategy_kwargs' must be a JSON object")
+    if strategy == "naive":
+        if strategy_kwargs:
+            raise ValueError("'strategy_kwargs' is not supported for 'naive'")
+        return {}
+    if strategy == "freeze":
+        invalid_keys = set(strategy_kwargs).difference({"frozen_layers"})
+        if invalid_keys:
+            raise ValueError(
+                "'strategy_kwargs' for 'freeze' may contain only "
+                "'frozen_layers'"
+            )
+        frozen_layers = strategy_kwargs.get(
+            "frozen_layers", ["node_embedding", "interactions"]
+        )
+        if (
+            not isinstance(frozen_layers, list)
+            or not all(isinstance(layer, str) for layer in frozen_layers)
+        ):
+            raise ValueError(
+                "'strategy_kwargs.frozen_layers' must be a JSON array "
+                "of strings"
+            )
+        return {"frozen_layers": tuple(frozen_layers)}
+    raise ValueError("'strategy' must be either 'naive' or 'freeze'")
+
+
 def _apply_training_strategy(
-    model: torch.nn.Module, strategy: str
+    model: torch.nn.Module,
+    strategy: str,
+    strategy_kwargs: dict[str, Any] | None = None,
 ) -> torch.nn.Module:
     """Copy a model and apply the requested X-MACE training strategy."""
     from mace.training.strategies import FreezeStrategy, NaiveStrategy
 
     if strategy == "naive":
+        if strategy_kwargs:
+            raise ValueError("'strategy_kwargs' is not supported for 'naive'")
         return NaiveStrategy().apply(model)
     if strategy == "freeze":
-        return FreezeStrategy(
-            frozen_layers=("node_embedding", "interactions")
-        ).apply(model)
+        freeze_kwargs = (
+            {"frozen_layers": ("node_embedding", "interactions")}
+            if strategy_kwargs is None
+            else strategy_kwargs
+        )
+        return FreezeStrategy(**freeze_kwargs).apply(model)
     raise ValueError("'strategy' must be either 'naive' or 'freeze'")
 
 
@@ -821,6 +861,7 @@ def _train_k_fold_models(
     forces_key: str,
     e0s: dict[str, float] | None,
     strategy: str = "naive",
+    strategy_kwargs: dict[str, Any] | None = None,
     on_fold_complete: Callable[[dict[str, Any]], None] | None = None,
     on_checkpoint: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
@@ -873,7 +914,9 @@ def _train_k_fold_models(
             ),
         )
         try:
-            fold_model = _apply_training_strategy(fold_model, strategy).to(device)
+            fold_model = _apply_training_strategy(
+                fold_model, strategy, strategy_kwargs
+            ).to(device)
             fold_model, history = trainer.train_model(
                 fold_model, train_loader, valid_loader, loss_fn
             )
@@ -1170,6 +1213,7 @@ def _train_model(
     load_base: str | None,
     e0s: dict[str, float] | None,
     strategy: str = "naive",
+    strategy_kwargs: dict[str, Any] | None = None,
     model_path: Path | None = None,
     on_checkpoint: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
@@ -1200,7 +1244,9 @@ def _train_model(
     )
     started_at = time.time()
     try:
-        model = _apply_training_strategy(model, strategy).to(device)
+        model = _apply_training_strategy(
+            model, strategy, strategy_kwargs
+        ).to(device)
         model, history = trainer.train_model(
             model, train_loader, valid_loader, loss_fn
         )

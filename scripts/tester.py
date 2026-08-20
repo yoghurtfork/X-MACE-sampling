@@ -33,7 +33,7 @@ from scripts.helper import (
     _save_selection_plot, _save_split_plot, _train_k_fold_models,
     _save_model,
     _trainer_options_for_learning_rate, _trainer_options_from_config,
-    _strategy_from_config, _validate_device, _write_json, seed_everything,
+    _strategy_from_config, _strategy_kwargs_from_config, _validate_device, _write_json, seed_everything,
 )
 
 
@@ -65,6 +65,7 @@ def run_config(
             "use base_full_trainer.py when 'transfer_learning' is false"
         )
     strategy = _strategy_from_config(config)
+    strategy_kwargs = _strategy_kwargs_from_config(config, strategy)
 
     if run_dir is None:
         run_dir = _next_run_dir(output_dir)
@@ -413,6 +414,7 @@ def run_config(
                 forces_key=str(config.get("forces_key", "REF_forces")),
                 e0s=full_e0s,
                 strategy=strategy,
+                strategy_kwargs=strategy_kwargs,
                 on_fold_complete=checkpoint_transfer_fold,
                 on_checkpoint=checkpoint_transfer_fold,
             )
@@ -536,7 +538,9 @@ def run_config(
         seed_everything(seed)
         started_at = time.time()
         try:
-            transfer_model = _apply_training_strategy(base_model, strategy).to(device)
+            transfer_model = _apply_training_strategy(
+                base_model, strategy, strategy_kwargs
+            ).to(device)
             transfer_model, transfer_history = trainer.train_model(
                 transfer_model,
                 transfer_train_loader,

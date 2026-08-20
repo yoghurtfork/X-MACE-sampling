@@ -22,7 +22,7 @@ from scripts.helper import (
     _import_project_modules, _is_scratch_config, _next_run_dir, _path,
     _read_atoms, _required, _save_epoch_mae_plot, _save_fold_selection_plot,
     _save_loss_plot, _save_scratch_mae_plot, _train_k_fold_models,
-    _train_model, _strategy_from_config, _trainer_options_from_config, _validate_device,
+    _train_model, _strategy_from_config, _strategy_kwargs_from_config, _trainer_options_from_config, _validate_device,
     _write_json, seed_everything,
 )
 
@@ -103,6 +103,7 @@ def run_config(
         base_e0s = _e0s_from_config(config, "base_E0s")
         full_e0s = _e0s_from_config(config, "full_E0s")
         strategy = _strategy_from_config(config)
+        strategy_kwargs = _strategy_kwargs_from_config(config, strategy)
         trainer_options = _trainer_options_from_config(config)
         preset = config.get("preset", "default_ani")
         if not isinstance(preset, str) or not preset:
@@ -202,6 +203,7 @@ def run_config(
                 "forces_key": forces_key,
                 "trainer_options": trainer_options,
                 "strategy": strategy,
+                "strategy_kwargs": strategy_kwargs,
             }
             initial_models = {}
             resolved_e0s = {}

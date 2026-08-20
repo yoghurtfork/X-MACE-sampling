@@ -408,10 +408,15 @@ class TrainingStrategyTests(unittest.TestCase):
 
     def test_strategy_defaults_to_naive_and_rejects_invalid_values(self) -> None:
         self.assertEqual(helper._strategy_from_config({}), "naive")
+        self.assertEqual(helper._strategy_kwargs_from_config({}, "naive"), {})
         with self.assertRaisesRegex(ValueError, "JSON string"):
             helper._strategy_from_config({"strategy": False})
         with self.assertRaisesRegex(ValueError, "naive.*freeze"):
             helper._strategy_from_config({"strategy": "invalid"})
+        with self.assertRaisesRegex(ValueError, "not supported"):
+            helper._strategy_kwargs_from_config(
+                {"strategy_kwargs": {"unexpected": True}}, "naive"
+            )
 
     def test_freeze_strategy_freezes_requested_layers_only(self) -> None:
         model = self._Model()
@@ -428,6 +433,24 @@ class TrainingStrategyTests(unittest.TestCase):
         self.assertTrue(all(
             parameter.requires_grad
             for parameter in transformed.readouts.parameters()
+        ))
+
+    def test_freeze_strategy_accepts_frozen_layers_from_json(self) -> None:
+        strategy_kwargs = helper._strategy_kwargs_from_config(
+            {"strategy_kwargs": {"frozen_layers": ["node_embedding"]}},
+            "freeze",
+        )
+        transformed = helper._apply_training_strategy(
+            self._Model(), "freeze", strategy_kwargs
+        )
+
+        self.assertTrue(all(
+            not parameter.requires_grad
+            for parameter in transformed.node_embedding.parameters()
+        ))
+        self.assertTrue(all(
+            parameter.requires_grad
+            for parameter in transformed.interactions.parameters()
         ))
 
 
