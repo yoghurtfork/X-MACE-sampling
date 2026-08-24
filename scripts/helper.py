@@ -50,6 +50,18 @@ def _strategy_from_config(config: dict[str, Any]) -> str:
     return strategy
 
 
+def _checkpoint_epochs_from_config(config: dict[str, Any]) -> int | None:
+    """Return the checkpoint interval requested by a run configuration."""
+    value = config.get("checkpoint_epochs")
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(
+            "'checkpoint_epochs' must be a positive JSON integer or null"
+        )
+    return value
+
+
 def _strategy_kwargs_from_config(
     config: dict[str, Any], strategy: str
 ) -> dict[str, Any]:
@@ -348,6 +360,49 @@ def _evaluate(
             tester.get_force_mae_by_state(), "force"
         ),
     }
+
+
+def _evaluate_checkpoint_models(
+    model: torch.nn.Module,
+    history: dict[str, Any],
+    *,
+    checkpoint_epochs: int | None,
+    model_path: Path | None,
+    test_loader: Any,
+    tester: Any,
+    device: torch.device,
+) -> None:
+    """Replace raw checkpoint weights with JSON-safe test metrics."""
+    checkpoint_models = history.get("checkpoint_models", [])
+    if checkpoint_epochs is None:
+        if checkpoint_models:
+            raise ValueError(
+                "Trainer returned checkpoint models without checkpoint_epochs"
+            )
+        history["checkpoint_models"] = []
+        return
+    if model_path is None:
+        raise ValueError("A model_path is required to save checkpoint models")
+
+    checkpoint_metrics = []
+    for checkpoint_index, checkpoint_state in enumerate(checkpoint_models, start=1):
+        epoch = checkpoint_index * checkpoint_epochs
+        checkpoint_model = deepcopy(model).to(device)
+        checkpoint_model.load_state_dict(checkpoint_state)
+        checkpoint_path = model_path.with_name(
+            f"{model_path.stem}_checkpoint_epoch_{epoch}{model_path.suffix}"
+        )
+        saved_path = _save_model(checkpoint_model, checkpoint_path)
+        metrics = _evaluate(checkpoint_model, test_loader, tester)
+        checkpoint_metrics.append(
+            {
+                "epoch": epoch,
+                "model_path": str(saved_path),
+                "test_energy_mae": metrics["energy_mae_ev"],
+                "test_force_mae": metrics["force_mae_ev_per_ang"],
+            }
+        )
+    history["checkpoint_models"] = checkpoint_metrics
 
 
 def _maes_by_state(values: Any, metric_name: str) -> dict[str, float]:
@@ -860,6 +915,7 @@ def _train_k_fold_models(
     energy_key: str,
     forces_key: str,
     e0s: dict[str, float] | None,
+    checkpoint_epochs: int | None = None,
     strategy: str = "naive",
     strategy_kwargs: dict[str, Any] | None = None,
     on_fold_complete: Callable[[dict[str, Any]], None] | None = None,
@@ -918,7 +974,11 @@ def _train_k_fold_models(
                 fold_model, strategy, strategy_kwargs
             ).to(device)
             fold_model, history = trainer.train_model(
-                fold_model, train_loader, valid_loader, loss_fn
+                fold_model,
+                train_loader,
+                valid_loader,
+                loss_fn,
+                checkpoint_epoch=checkpoint_epochs,
             )
         except KeyboardInterrupt:
             _save_model(fold_model, model_path)
@@ -935,6 +995,15 @@ def _train_k_fold_models(
                 ))
             raise
         _save_model(fold_model, model_path)
+        _evaluate_checkpoint_models(
+            fold_model,
+            history,
+            checkpoint_epochs=checkpoint_epochs,
+            model_path=model_path,
+            test_loader=test_loader,
+            tester=tester,
+            device=device,
+        )
         if on_checkpoint is not None:
             on_checkpoint(_cross_validation_snapshot(
                 fold_results, artifacts,
@@ -1212,6 +1281,7 @@ def _train_model(
     preset: str,
     load_base: str | None,
     e0s: dict[str, float] | None,
+    checkpoint_epochs: int | None = None,
     strategy: str = "naive",
     strategy_kwargs: dict[str, Any] | None = None,
     model_path: Path | None = None,
@@ -1248,7 +1318,11 @@ def _train_model(
             model, strategy, strategy_kwargs
         ).to(device)
         model, history = trainer.train_model(
-            model, train_loader, valid_loader, loss_fn
+            model,
+            train_loader,
+            valid_loader,
+            loss_fn,
+            checkpoint_epoch=checkpoint_epochs,
         )
     except KeyboardInterrupt:
         if model_path is not None:
@@ -1261,8 +1335,17 @@ def _train_model(
                     "E0s": resolved_e0s,
                 })
         raise
+    saved_path = _save_model(model, model_path) if model_path is not None else None
+    _evaluate_checkpoint_models(
+        model,
+        history,
+        checkpoint_epochs=checkpoint_epochs,
+        model_path=model_path,
+        test_loader=test_loader,
+        tester=tester,
+        device=device,
+    )
     if model_path is not None:
-        saved_path = _save_model(model, model_path)
         if on_checkpoint is not None:
             on_checkpoint({
                 "status": "trained_pending_evaluation",

@@ -26,12 +26,12 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts.helper import (
     BATCH_SIZE, DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEVICE,
     MAX_EPOCHS, R_MAX, SEED, TRANSFER_LR, VALIDATION_FRACTION,
-    _apply_training_strategy, _e0s_from_config, _e0s_from_metadata, _evaluate,
+    _apply_training_strategy, _checkpoint_epochs_from_config, _e0s_from_config, _e0s_from_metadata, _evaluate,
     _import_project_modules, _load_model, _next_run_dir, _path, _read_atoms,
     _required, _save_epoch_mae_plot, _save_fold_selection_plot,
     _save_loss_plot, _save_mae_plot, _save_pca_selection_plots,
     _save_selection_plot, _save_split_plot, _train_k_fold_models,
-    _save_model,
+    _evaluate_checkpoint_models, _save_model,
     _trainer_options_for_learning_rate, _trainer_options_from_config,
     _strategy_from_config, _strategy_kwargs_from_config, _validate_device, _write_json, seed_everything,
 )
@@ -87,6 +87,7 @@ def run_config(
         result["config"] = config
         _write_json(result_path, result)
         seed = int(config.get("seed", SEED))
+        checkpoint_epochs = _checkpoint_epochs_from_config(config)
         cross_validation_value = config.get("cross_validation", False)
         if not isinstance(cross_validation_value, bool):
             raise ValueError("'cross_validation' must be a JSON boolean")
@@ -413,6 +414,7 @@ def run_config(
                 energy_key=str(config.get("energy_key", "REF_energy")),
                 forces_key=str(config.get("forces_key", "REF_forces")),
                 e0s=full_e0s,
+                checkpoint_epochs=checkpoint_epochs,
                 strategy=strategy,
                 strategy_kwargs=strategy_kwargs,
                 on_fold_complete=checkpoint_transfer_fold,
@@ -546,6 +548,7 @@ def run_config(
                 transfer_train_loader,
                 transfer_valid_loader,
                 loss_fn,
+                checkpoint_epoch=checkpoint_epochs,
             )
         except KeyboardInterrupt:
             _save_model(transfer_model, transfer_model_path)
@@ -561,6 +564,15 @@ def run_config(
             raise
         _save_model(transfer_model, transfer_model_path)
         training_seconds = time.time() - started_at
+        _evaluate_checkpoint_models(
+            transfer_model,
+            transfer_history,
+            checkpoint_epochs=checkpoint_epochs,
+            model_path=transfer_model_path,
+            test_loader=transfer_test_loader,
+            tester=tester,
+            device=device,
+        )
         result.update({
             "models": {"transfer_model": str(transfer_model_path)},
             "transfer_training": {

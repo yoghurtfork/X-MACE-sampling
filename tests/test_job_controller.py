@@ -160,6 +160,7 @@ class SingleTrainerTests(unittest.TestCase):
                         "batch_size": 3,
                         "max_epochs": 12,
                         "full_learning_rate": 0.02,
+                        "checkpoint_epochs": 3,
                         "full_E0s": {"C": -1.5},
                         "preset": "test-preset",
                         "load_base": None,
@@ -193,6 +194,7 @@ class SingleTrainerTests(unittest.TestCase):
             self.assertEqual(kwargs["preset"], "test-preset")
             self.assertEqual(kwargs["load_base"], None)
             self.assertEqual(kwargs["e0s"]["C"], -1.5)
+            self.assertEqual(kwargs["checkpoint_epochs"], 3)
             result = json.loads(result_path.read_text(encoding="utf-8"))
             self.assertEqual(result["run"], "just_full")
             self.assertIn("full_high_fidelity_model", result["models"])
@@ -216,6 +218,7 @@ class SingleTrainerTests(unittest.TestCase):
                         "k": 2,
                         "base_max_epochs": 9,
                         "base_learning_rate": 0.03,
+                        "checkpoint_epochs": 4,
                     }
                 ),
                 encoding="utf-8",
@@ -239,6 +242,7 @@ class SingleTrainerTests(unittest.TestCase):
             self.assertEqual(kwargs["k"], 2)
             self.assertEqual(kwargs["max_epochs"], 9)
             self.assertEqual(kwargs["learning_rate"], 0.03)
+            self.assertEqual(kwargs["checkpoint_epochs"], 4)
             self.assertIsNone(kwargs["e0s"])
             result = json.loads(result_path.read_text(encoding="utf-8"))
             self.assertEqual(result["E0s"], {"base": {"C": -1.5}})
@@ -271,7 +275,10 @@ class AutomaticE0Tests(unittest.TestCase):
         def __init__(self, **kwargs):
             pass
 
-        def train_model(self, model, train_loader, valid_loader, loss_fn):
+        def train_model(
+            self, model, train_loader, valid_loader, loss_fn,
+            checkpoint_epoch=None,
+        ):
             return model, {"best_epoch": 1}
 
     @staticmethod
@@ -334,14 +341,23 @@ class TrainingCheckpointTests(unittest.TestCase):
         def __init__(self, **kwargs):
             pass
 
-        def train_model(self, model, train_loader, valid_loader, loss_fn):
+        def train_model(
+            self, model, train_loader, valid_loader, loss_fn,
+            checkpoint_epoch=None,
+        ):
             raise KeyboardInterrupt
 
     class _CompletedTrainer:
+        checkpoint_epoch = None
+
         def __init__(self, **kwargs):
             pass
 
-        def train_model(self, model, train_loader, valid_loader, loss_fn):
+        def train_model(
+            self, model, train_loader, valid_loader, loss_fn,
+            checkpoint_epoch=None,
+        ):
+            self.__class__.checkpoint_epoch = checkpoint_epoch
             return model, {"best_epoch": 1}
 
     def _kwargs(self, run_dir: Path) -> dict[str, object]:
@@ -392,10 +408,68 @@ class TrainingCheckpointTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "evaluation failed"):
                 helper._train_k_fold_models(
                     trainer_class=self._CompletedTrainer,
+                    checkpoint_epochs=2,
                     **self._kwargs(Path(temporary_dir)),
                 )
 
         self.assertTrue(save_model.called)
+        self.assertEqual(self._CompletedTrainer.checkpoint_epoch, 2)
+
+    def test_checkpoint_history_contains_test_metrics(self) -> None:
+        model = torch.nn.Linear(1, 1)
+        checkpoint_state = {
+            name: value.detach().clone()
+            for name, value in model.state_dict().items()
+        }
+        history = {"checkpoint_models": [checkpoint_state]}
+        checkpoint_metrics = {
+            "energy_mae_ev": 0.2,
+            "force_mae_ev_per_ang": 0.3,
+            "energy_mae_by_state_ev": {"S0": 0.2},
+            "force_mae_by_state_ev_per_ang": {"S0": 0.3},
+        }
+        with tempfile.TemporaryDirectory() as temporary_dir, patch.object(
+            helper, "_evaluate", return_value=checkpoint_metrics
+        ):
+            checkpoint_path = Path(temporary_dir) / "model.pt"
+            helper._evaluate_checkpoint_models(
+                model,
+                history,
+                checkpoint_epochs=5,
+                model_path=checkpoint_path,
+                test_loader=object(),
+                tester=object(),
+                device=torch.device("cpu"),
+            )
+            saved_path = checkpoint_path.with_name(
+                "model_checkpoint_epoch_5.pt"
+            )
+            self.assertTrue(saved_path.is_file())
+            self.assertIsInstance(
+                helper._load_model(saved_path, torch.device("cpu")), torch.nn.Linear
+            )
+
+        self.assertEqual(
+            history["checkpoint_models"],
+            [{
+                "epoch": 5,
+                "model_path": str(saved_path),
+                "test_energy_mae": 0.2,
+                "test_force_mae": 0.3,
+            }],
+        )
+        json.dumps(history)
+
+    def test_checkpoint_epochs_validation(self) -> None:
+        self.assertIsNone(helper._checkpoint_epochs_from_config({}))
+        self.assertIsNone(helper._checkpoint_epochs_from_config({"checkpoint_epochs": None}))
+        self.assertEqual(
+            helper._checkpoint_epochs_from_config({"checkpoint_epochs": 5}), 5
+        )
+        for value in (0, -1, True, 1.5, "5", []):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "checkpoint_epochs"):
+                    helper._checkpoint_epochs_from_config({"checkpoint_epochs": value})
 
 
 class TrainingStrategyTests(unittest.TestCase):

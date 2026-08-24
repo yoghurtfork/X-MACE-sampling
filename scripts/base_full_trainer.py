@@ -18,7 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts.helper import (
     BATCH_SIZE, DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEVICE,
     MAX_EPOCHS, R_MAX, SCRATCH_LR, SEED, VALIDATION_FRACTION,
-    _e0s_from_config, _e0s_from_metadata, _evaluate,
+    _checkpoint_epochs_from_config, _e0s_from_config, _e0s_from_metadata, _evaluate,
     _import_project_modules, _is_scratch_config, _next_run_dir, _path,
     _read_atoms, _required, _save_epoch_mae_plot, _save_fold_selection_plot,
     _save_loss_plot, _save_scratch_mae_plot, _train_k_fold_models,
@@ -71,6 +71,7 @@ def run_config(
         result["config"] = config
         _write_json(result_path, result)
         seed = int(config.get("seed", SEED))
+        checkpoint_epochs = _checkpoint_epochs_from_config(config)
         cross_validation = config.get("cross_validation", False)
         if not isinstance(cross_validation, bool):
             raise ValueError("'cross_validation' must be a JSON boolean")
@@ -268,6 +269,7 @@ def run_config(
                 max_epochs=base_max_epochs,
                 learning_rate=base_lr,
                 e0s=base_e0s,
+                checkpoint_epochs=checkpoint_epochs,
                 on_fold_complete=lambda snapshot: checkpoint_fold(
                     "base_models", snapshot
                 ),
@@ -284,6 +286,7 @@ def run_config(
                 max_epochs=full_max_epochs,
                 learning_rate=full_lr,
                 e0s=full_e0s,
+                checkpoint_epochs=checkpoint_epochs,
                 on_fold_complete=lambda snapshot: checkpoint_fold(
                     "full_high_fidelity_models", snapshot
                 ),
@@ -424,6 +427,7 @@ def run_config(
                 max_epochs=base_max_epochs,
                 learning_rate=base_lr,
                 e0s=base_e0s,
+                checkpoint_epochs=checkpoint_epochs,
                 model_path=base_path,
                 on_checkpoint=lambda snapshot: checkpoint_model(
                     "base_model", snapshot
@@ -437,6 +441,7 @@ def run_config(
                 max_epochs=full_max_epochs,
                 learning_rate=full_lr,
                 e0s=full_e0s,
+                checkpoint_epochs=checkpoint_epochs,
                 model_path=full_path,
                 on_checkpoint=lambda snapshot: checkpoint_model(
                     "full_high_fidelity_model", snapshot
