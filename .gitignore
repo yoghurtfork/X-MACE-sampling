@@ -232,3 +232,4 @@ data/azoflip_data/**
 
 # Full azobenzene dataset generated locally
 /data/azoflip_data/XYZ/cis_trans_azobenzenes_full.xyz
+data/azoflip_data/XYZ/dataset/cis_trans_azobenzenes_full.xyz
