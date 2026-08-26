@@ -224,7 +224,7 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Local datasets
-data/**/dynamic/
+data/**/dynamic_gitignore/
 # Keep the dataset ignored by default, but allow XYZ structures to be tracked.
 data/azoflip_data/**
 !data/azoflip_data/**/
