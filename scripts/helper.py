@@ -918,10 +918,11 @@ def _train_k_fold_models(
     checkpoint_epochs: int | None = None,
     strategy: str = "naive",
     strategy_kwargs: dict[str, Any] | None = None,
+    generate_plots: bool = True,
     on_fold_complete: Callable[[dict[str, Any]], None] | None = None,
     on_checkpoint: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Train, test, plot, and save a set of X-MACE K-fold models."""
+    """Train, test, and save a set of X-MACE K-fold models."""
     if not 2 <= k <= len(all_atoms):
         raise ValueError(
             f"'k' must be between 2 and the {model_prefix} dataset size "
@@ -987,6 +988,7 @@ def _train_k_fold_models(
                     fold_results, artifacts,
                     {**model_paths, model_key: str(model_path)}, total_folds=k,
                     started_at=started_at,
+                    include_artifacts=generate_plots,
                     current_fold={
                         "key": model_key,
                         "status": "interrupted",
@@ -1009,6 +1011,7 @@ def _train_k_fold_models(
                 fold_results, artifacts,
                 {**model_paths, model_key: str(model_path)}, total_folds=k,
                 started_at=started_at,
+                include_artifacts=generate_plots,
                 current_fold={
                     "key": model_key,
                     "status": "trained_pending_evaluation",
@@ -1028,37 +1031,40 @@ def _train_k_fold_models(
             on_checkpoint(_cross_validation_snapshot(
                 fold_results, artifacts, model_paths, total_folds=k,
                 started_at=started_at,
+                include_artifacts=generate_plots,
                 current_fold={
                     "key": model_key,
                     "status": "evaluated_pending_artifacts",
                     "model_path": str(model_path),
                 },
             ))
-        loss_plot = _save_loss_plot(
-            run_dir,
-            history,
-            title=f"{model_prefix.replace('_', ' ').title()} fold {fold_number}",
-            filename=f"{model_prefix}_fold_{fold_number}_loss.png",
-        )
-        mae_plot = _save_epoch_mae_plot(
-            run_dir,
-            history,
-            title=(
-                f"{model_prefix.replace('_', ' ').title()} "
-                f"fold {fold_number} validation MAE"
-            ),
-            filename=f"{model_prefix}_fold_{fold_number}_validation_mae.png",
-        )
-        artifacts[model_key] = {
-            "loss_plot": loss_plot,
-            "validation_mae_plot": mae_plot,
-        }
+        if generate_plots:
+            loss_plot = _save_loss_plot(
+                run_dir,
+                history,
+                title=f"{model_prefix.replace('_', ' ').title()} fold {fold_number}",
+                filename=f"{model_prefix}_fold_{fold_number}_loss.png",
+            )
+            mae_plot = _save_epoch_mae_plot(
+                run_dir,
+                history,
+                title=(
+                    f"{model_prefix.replace('_', ' ').title()} "
+                    f"fold {fold_number} validation MAE"
+                ),
+                filename=f"{model_prefix}_fold_{fold_number}_validation_mae.png",
+            )
+            artifacts[model_key] = {
+                "loss_plot": loss_plot,
+                "validation_mae_plot": mae_plot,
+            }
         snapshot = _cross_validation_snapshot(
             fold_results,
             artifacts,
             model_paths,
             total_folds=k,
             started_at=started_at,
+            include_artifacts=generate_plots,
         )
         if on_fold_complete is not None:
             on_fold_complete(snapshot)
@@ -1069,6 +1075,7 @@ def _train_k_fold_models(
         model_paths,
         total_folds=k,
         started_at=started_at,
+        include_artifacts=generate_plots,
     ) | {"E0s": resolved_e0s}
 
 
@@ -1080,6 +1087,7 @@ def _cross_validation_snapshot(
     total_folds: int,
     started_at: float,
     current_fold: dict[str, Any] | None = None,
+    include_artifacts: bool = True,
 ) -> dict[str, Any]:
     if fold_results:
         best_epochs = np.asarray(
@@ -1099,10 +1107,11 @@ def _cross_validation_snapshot(
         "aggregate_test_metrics": aggregate_metrics,
         "training_seconds": time.time() - started_at,
         "model_paths": model_paths,
-        "artifacts": artifacts,
         "completed_folds": len(fold_results),
         "total_folds": total_folds,
     }
+    if include_artifacts:
+        snapshot["artifacts"] = artifacts
     if current_fold is not None:
         snapshot["current_fold"] = current_fold
     return snapshot

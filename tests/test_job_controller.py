@@ -161,6 +161,7 @@ class SingleTrainerTests(unittest.TestCase):
                         "max_epochs": 12,
                         "full_learning_rate": 0.02,
                         "checkpoint_epochs": 3,
+                        "verbose": True,
                         "full_E0s": {"C": -1.5},
                         "preset": "test-preset",
                         "load_base": None,
@@ -182,8 +183,8 @@ class SingleTrainerTests(unittest.TestCase):
                 patch.object(single_trainer, "_read_atoms", side_effect=[[1, 2, 3, 4], [5]]),
                 patch.object(single_trainer, "_validate_device", return_value="cpu"),
                 patch.object(single_trainer, "_train_model", return_value=model_run) as train_model,
-                patch.object(single_trainer, "_save_loss_plot", return_value="loss.png"),
-                patch.object(single_trainer, "_save_epoch_mae_plot", return_value="mae.png"),
+                patch.object(single_trainer, "_save_loss_plot", return_value="loss.png") as save_loss_plot,
+                patch.object(single_trainer, "_save_epoch_mae_plot", return_value="mae.png") as save_mae_plot,
             ):
                 result_path = single_trainer.run_config(config_path, root, run_dir)
             kwargs = train_model.call_args.kwargs
@@ -200,6 +201,53 @@ class SingleTrainerTests(unittest.TestCase):
             self.assertIn("full_high_fidelity_model", result["models"])
             self.assertNotIn("base_model", result["models"])
             self.assertNotIn("final_metrics_comparison_plot", result["artifacts"])
+            save_loss_plot.assert_called_once()
+            save_mae_plot.assert_called_once()
+
+    def test_single_stage_verbose_false_skips_plots_and_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path = root / "single.json"
+            run_dir = root / "run_0"
+            run_dir.mkdir()
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "transfer_learning": False,
+                        "run": "just_base",
+                        "base_xyz": "base.xyz",
+                        "base_test_xyz": "base_test.xyz",
+                        "cross_validation": False,
+                        "verbose": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            model_run = {
+                "model": {"weights": "test"},
+                "history": {"best_epoch": 1},
+                "metrics": {"energy": 0.1},
+                "training_seconds": 1.0,
+                "max_epochs": 1,
+                "learning_rate": 0.001,
+                "E0s": {"C": -1.5},
+            }
+            with (
+                patch.object(single_trainer, "_import_project_modules", return_value=self._modules()),
+                patch.object(single_trainer, "_read_atoms", side_effect=[[1, 2], [3]]),
+                patch.object(single_trainer, "_validate_device", return_value="cpu"),
+                patch.object(single_trainer, "_train_model", return_value=model_run),
+                patch.object(single_trainer, "_save_loss_plot") as save_loss_plot,
+                patch.object(single_trainer, "_save_epoch_mae_plot") as save_mae_plot,
+            ):
+                result_path = single_trainer.run_config(config_path, root, run_dir)
+
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            self.assertEqual(result["status"], "completed")
+            self.assertIn("base_model", result["models"])
+            self.assertNotIn("artifacts", result)
+            save_loss_plot.assert_not_called()
+            save_mae_plot.assert_not_called()
 
     def test_base_cross_validation_uses_base_inputs_only(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -328,6 +376,43 @@ class AutomaticE0Tests(unittest.TestCase):
         self.assertIsNone(builder.kwargs["E0s"])
         self.assertEqual(builder.load_calls[0][0], training_pool)
         self.assertEqual(builder.load_calls[1][0], ["test_0"])
+
+    def test_cross_validation_verbose_false_skips_fold_plots(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary_dir,
+            patch.object(helper, "seed_everything"),
+            patch.object(helper, "_evaluate", return_value=self._metrics()),
+            patch.object(helper, "_save_loss_plot") as save_loss_plot,
+            patch.object(helper, "_save_epoch_mae_plot") as save_mae_plot,
+            patch.object(helper, "_save_model"),
+        ):
+            result = helper._train_k_fold_models(
+                initial_model=self._Model(),
+                all_atoms=["train_0", "train_1", "train_2", "train_3"],
+                test_atoms=["test_0"],
+                model_prefix="model",
+                run_dir=Path(temporary_dir),
+                data_builder_class=self._Builder,
+                trainer_class=self._Trainer,
+                tester=object(),
+                loss_fn=object(),
+                device="cpu",
+                seed=42,
+                k=2,
+                r_max=5.0,
+                batch_size=2,
+                max_epochs=1,
+                learning_rate=0.001,
+                trainer_options={},
+                energy_key="REF_energy",
+                forces_key="REF_forces",
+                e0s=None,
+                generate_plots=False,
+            )
+
+        self.assertNotIn("artifacts", result)
+        save_loss_plot.assert_not_called()
+        save_mae_plot.assert_not_called()
 
 
 class TrainingCheckpointTests(unittest.TestCase):
