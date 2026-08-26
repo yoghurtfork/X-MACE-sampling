@@ -26,12 +26,12 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts.helper import (
     BATCH_SIZE, DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEVICE,
     MAX_EPOCHS, R_MAX, SEED, TRANSFER_LR, VALIDATION_FRACTION,
-    _apply_training_strategy, _e0s_from_config, _e0s_from_metadata, _evaluate,
+    _apply_training_strategy, _checkpoint_epochs_from_config, _e0s_from_config, _e0s_from_metadata, _evaluate,
     _import_project_modules, _load_model, _next_run_dir, _path, _read_atoms,
     _required, _save_epoch_mae_plot, _save_fold_selection_plot,
     _save_loss_plot, _save_mae_plot, _save_pca_selection_plots,
     _save_selection_plot, _save_split_plot, _train_k_fold_models,
-    _save_model,
+    _evaluate_checkpoint_models, _save_model,
     _trainer_options_for_learning_rate, _trainer_options_from_config,
     _strategy_from_config, _strategy_kwargs_from_config, _validate_device, _write_json, seed_everything,
 )
@@ -87,6 +87,7 @@ def run_config(
         result["config"] = config
         _write_json(result_path, result)
         seed = int(config.get("seed", SEED))
+        checkpoint_epochs = _checkpoint_epochs_from_config(config)
         cross_validation_value = config.get("cross_validation", False)
         if not isinstance(cross_validation_value, bool):
             raise ValueError("'cross_validation' must be a JSON boolean")
@@ -116,6 +117,7 @@ def run_config(
         base_e0s = _e0s_from_config(config, "base_E0s")
         full_e0s = _e0s_from_config(config, "full_E0s")
         trainer_options = _trainer_options_from_config(config)
+        generate_plots = trainer_options["verbose"]
 
         if not cross_validation and not 0.0 < validation_fraction < 1.0:
             raise ValueError("'validation_fraction' must be between 0 and 1")
@@ -211,7 +213,7 @@ def run_config(
             _required(config, "full_model_path"), config_path
         )
         split_plot = None
-        if not cross_validation:
+        if generate_plots and not cross_validation:
             split_plot = _save_split_plot(
                 run_dir,
                 base_atoms,
@@ -339,29 +341,31 @@ def run_config(
         if len(np.unique(sampled_indices)) != len(sampled_indices):
             raise RuntimeError("Selector returned duplicate indices")
         sampled_atoms = [transfer_train_atoms[i] for i in sampled_indices]
-        selection_plot = _save_selection_plot(
-            run_dir,
-            base_atoms,
-            base_test_atoms,
-            train_indices,
-            valid_indices,
-            sampled_indices,
-            descriptors,
-        )
-        pca_plots = _save_pca_selection_plots(
-            run_dir,
-            descriptor_matrix,
-            sampled_indices,
-            descriptor_name,
-            selector_name,
-        )
+        selection_plot = None
+        pca_plots = {}
+        if generate_plots:
+            selection_plot = _save_selection_plot(
+                run_dir,
+                base_atoms,
+                base_test_atoms,
+                train_indices,
+                valid_indices,
+                sampled_indices,
+                descriptors,
+            )
+            pca_plots = _save_pca_selection_plots(
+                run_dir,
+                descriptor_matrix,
+                sampled_indices,
+                descriptor_name,
+                selector_name,
+            )
 
         if cross_validation:
             transfer_initial_model = base_model
 
             def checkpoint_transfer_fold(snapshot: dict[str, Any]) -> None:
-                result.update(
-                    {
+                checkpoint_result = {
                         "status": "running",
                         "cross_validation_progress": {
                             "transfer_models": {
@@ -382,14 +386,15 @@ def run_config(
                         "models": {
                             "transfer_models": snapshot["model_paths"]
                         },
-                        "artifacts": {
-                            "data_split_plot": split_plot,
-                            "sample_selection_plot": selection_plot,
-                            **pca_plots,
-                            "transfer_models": snapshot["artifacts"]
-                        },
                     }
-                )
+                if generate_plots:
+                    checkpoint_result["artifacts"] = {
+                        "data_split_plot": split_plot,
+                        "sample_selection_plot": selection_plot,
+                        **pca_plots,
+                        "transfer_models": snapshot["artifacts"],
+                    }
+                result.update(checkpoint_result)
                 _write_json(result_path, result)
 
             transfer_cv = _train_k_fold_models(
@@ -413,50 +418,39 @@ def run_config(
                 energy_key=str(config.get("energy_key", "REF_energy")),
                 forces_key=str(config.get("forces_key", "REF_forces")),
                 e0s=full_e0s,
+                checkpoint_epochs=checkpoint_epochs,
                 strategy=strategy,
                 strategy_kwargs=strategy_kwargs,
+                generate_plots=generate_plots,
                 on_fold_complete=checkpoint_transfer_fold,
                 on_checkpoint=checkpoint_transfer_fold,
             )
-            sampled_global_indices = train_indices[sampled_indices]
-            fold_selection_plots = {}
-            splitter = KFold(
-                n_splits=k, shuffle=True, random_state=seed
-            )
-            for fold_number, (
-                fold_train_indices,
-                fold_valid_indices,
-            ) in enumerate(
-                splitter.split(range(len(sampled_atoms))), start=1
-            ):
-                model_key = f"model_{fold_number}"
-                fold_selection_plots[model_key] = (
-                    _save_fold_selection_plot(
-                        run_dir=run_dir,
-                        base_atoms=base_atoms,
-                        base_test_atoms=base_test_atoms,
-                        sampled_global_indices=sampled_global_indices,
-                        fold_train_indices=fold_train_indices,
-                        fold_valid_indices=fold_valid_indices,
-                        fold_number=fold_number,
-                        model_prefix="transfer_model",
-                        descriptors=descriptors,
+            metrics_plot = None
+            if generate_plots:
+                sampled_global_indices = train_indices[sampled_indices]
+                splitter = KFold(n_splits=k, shuffle=True, random_state=seed)
+                for fold_number, (fold_train_indices, fold_valid_indices) in enumerate(
+                    splitter.split(range(len(sampled_atoms))), start=1
+                ):
+                    model_key = f"model_{fold_number}"
+                    transfer_cv["artifacts"][model_key]["selection_plot"] = (
+                        _save_fold_selection_plot(
+                            run_dir=run_dir, base_atoms=base_atoms,
+                            base_test_atoms=base_test_atoms,
+                            sampled_global_indices=sampled_global_indices,
+                            fold_train_indices=fold_train_indices,
+                            fold_valid_indices=fold_valid_indices,
+                            fold_number=fold_number, model_prefix="transfer_model",
+                            descriptors=descriptors,
+                        )
                     )
+                metrics_plot = _save_mae_plot(
+                    run_dir, base_metrics, full_metrics,
+                    transfer_cv["aggregate_test_metrics"],
+                    transfer_cv["combined_validation"]["best_epoch"],
+                    cross_validation=True,
                 )
-                transfer_cv["artifacts"][model_key][
-                    "selection_plot"
-                ] = fold_selection_plots[model_key]
-
-            metrics_plot = _save_mae_plot(
-                run_dir,
-                base_metrics,
-                full_metrics,
-                transfer_cv["aggregate_test_metrics"],
-                transfer_cv["combined_validation"]["best_epoch"],
-                cross_validation=True,
-            )
-            result.update(
-                {
+            completed_result = {
                     "status": "completed",
                     "config": config,
                     "transfer_learning": True,
@@ -517,14 +511,15 @@ def run_config(
                     "models": {
                         "transfer_models": transfer_cv["model_paths"]
                     },
-                    "artifacts": {
-                        "sample_selection_plot": selection_plot,
-                        **pca_plots,
-                        "transfer_models": transfer_cv["artifacts"],
-                        "final_metrics_comparison_plot": metrics_plot,
-                    },
                 }
-            )
+            if generate_plots:
+                completed_result["artifacts"] = {
+                    "sample_selection_plot": selection_plot,
+                    **pca_plots,
+                    "transfer_models": transfer_cv["artifacts"],
+                    "final_metrics_comparison_plot": metrics_plot,
+                }
+            result.update(completed_result)
             _write_json(result_path, result)
             return result_path
 
@@ -546,6 +541,7 @@ def run_config(
                 transfer_train_loader,
                 transfer_valid_loader,
                 loss_fn,
+                checkpoint_epoch=checkpoint_epochs,
             )
         except KeyboardInterrupt:
             _save_model(transfer_model, transfer_model_path)
@@ -561,6 +557,15 @@ def run_config(
             raise
         _save_model(transfer_model, transfer_model_path)
         training_seconds = time.time() - started_at
+        _evaluate_checkpoint_models(
+            transfer_model,
+            transfer_history,
+            checkpoint_epochs=checkpoint_epochs,
+            model_path=transfer_model_path,
+            test_loader=transfer_test_loader,
+            tester=tester,
+            device=device,
+        )
         result.update({
             "models": {"transfer_model": str(transfer_model_path)},
             "transfer_training": {
@@ -592,17 +597,14 @@ def run_config(
         })
         _write_json(result_path, result)
 
-        loss_plot = _save_loss_plot(run_dir, transfer_history)
-        metrics_plot = _save_mae_plot(
-            run_dir,
-            base_metrics,
-            full_metrics,
-            transfer_metrics,
-            transfer_history["best_epoch"],
-            cross_validation=False,
-        )
-        result.update(
-            {
+        loss_plot = metrics_plot = None
+        if generate_plots:
+            loss_plot = _save_loss_plot(run_dir, transfer_history)
+            metrics_plot = _save_mae_plot(
+                run_dir, base_metrics, full_metrics, transfer_metrics,
+                transfer_history["best_epoch"], cross_validation=False,
+            )
+        completed_result = {
                 "status": "completed",
                 "config": config,
                 "transfer_learning": True,
@@ -648,15 +650,16 @@ def run_config(
                     "history": transfer_history,
                 },
                 "models": {"transfer_model": str(transfer_model_path)},
-                "artifacts": {
-                    "data_split_plot": split_plot,
-                    "sample_selection_plot": selection_plot,
-                    **pca_plots,
-                    "transfer_loss_plot": loss_plot,
-                    "final_metrics_comparison_plot": metrics_plot,
-                },
             }
-        )
+        if generate_plots:
+            completed_result["artifacts"] = {
+                "data_split_plot": split_plot,
+                "sample_selection_plot": selection_plot,
+                **pca_plots,
+                "transfer_loss_plot": loss_plot,
+                "final_metrics_comparison_plot": metrics_plot,
+            }
+        result.update(completed_result)
         _write_json(result_path, result)
         return result_path
     except KeyboardInterrupt:

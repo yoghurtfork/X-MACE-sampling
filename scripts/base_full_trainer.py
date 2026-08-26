@@ -18,7 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts.helper import (
     BATCH_SIZE, DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEVICE,
     MAX_EPOCHS, R_MAX, SCRATCH_LR, SEED, VALIDATION_FRACTION,
-    _e0s_from_config, _e0s_from_metadata, _evaluate,
+    _checkpoint_epochs_from_config, _e0s_from_config, _e0s_from_metadata, _evaluate,
     _import_project_modules, _is_scratch_config, _next_run_dir, _path,
     _read_atoms, _required, _save_epoch_mae_plot, _save_fold_selection_plot,
     _save_loss_plot, _save_scratch_mae_plot, _train_k_fold_models,
@@ -71,6 +71,7 @@ def run_config(
         result["config"] = config
         _write_json(result_path, result)
         seed = int(config.get("seed", SEED))
+        checkpoint_epochs = _checkpoint_epochs_from_config(config)
         cross_validation = config.get("cross_validation", False)
         if not isinstance(cross_validation, bool):
             raise ValueError("'cross_validation' must be a JSON boolean")
@@ -105,6 +106,7 @@ def run_config(
         strategy = _strategy_from_config(config)
         strategy_kwargs = _strategy_kwargs_from_config(config, strategy)
         trainer_options = _trainer_options_from_config(config)
+        generate_plots = trainer_options["verbose"]
         preset = config.get("preset", "default_ani")
         if not isinstance(preset, str) or not preset:
             raise ValueError("'preset' must be a non-empty string")
@@ -204,6 +206,7 @@ def run_config(
                 "trainer_options": trainer_options,
                 "strategy": strategy,
                 "strategy_kwargs": strategy_kwargs,
+                "generate_plots": generate_plots,
             }
             initial_models = {}
             resolved_e0s = {}
@@ -239,8 +242,7 @@ def run_config(
                     }
                     for key, value in partial_runs.items()
                 }
-                result.update(
-                    {
+                checkpoint_result = {
                         "status": "running",
                         "cross_validation_progress": progress,
                         "metrics": {
@@ -252,12 +254,13 @@ def run_config(
                             key: value["model_paths"]
                             for key, value in partial_runs.items()
                         },
-                        "artifacts": {
-                            key: value["artifacts"]
-                            for key, value in partial_runs.items()
-                        },
                     }
-                )
+                if generate_plots:
+                    checkpoint_result["artifacts"] = {
+                        key: value["artifacts"]
+                        for key, value in partial_runs.items()
+                    }
+                result.update(checkpoint_result)
                 _write_json(result_path, result)
 
             base_run = _train_k_fold_models(
@@ -268,6 +271,7 @@ def run_config(
                 max_epochs=base_max_epochs,
                 learning_rate=base_lr,
                 e0s=base_e0s,
+                checkpoint_epochs=checkpoint_epochs,
                 on_fold_complete=lambda snapshot: checkpoint_fold(
                     "base_models", snapshot
                 ),
@@ -284,6 +288,7 @@ def run_config(
                 max_epochs=full_max_epochs,
                 learning_rate=full_lr,
                 e0s=full_e0s,
+                checkpoint_epochs=checkpoint_epochs,
                 on_fold_complete=lambda snapshot: checkpoint_fold(
                     "full_high_fidelity_models", snapshot
                 ),
@@ -292,44 +297,38 @@ def run_config(
                 ),
                 **common,
             )
-            for model_prefix, atoms, test_atoms, model_run in (
-                ("base_model", base_atoms, base_test_atoms, base_run),
-                ("full_model", full_atoms, full_test_atoms, full_run),
-            ):
-                splitter = KFold(
-                    n_splits=k, shuffle=True, random_state=seed
-                )
-                all_indices = np.arange(len(atoms))
-                for fold_number, (
-                    fold_train_indices,
-                    fold_valid_indices,
-                ) in enumerate(
-                    splitter.split(range(len(atoms))), start=1
+            comparison_plot = None
+            if generate_plots:
+                for model_prefix, atoms, test_atoms, model_run in (
+                    ("base_model", base_atoms, base_test_atoms, base_run),
+                    ("full_model", full_atoms, full_test_atoms, full_run),
                 ):
-                    model_key = f"model_{fold_number}"
-                    model_run["artifacts"][model_key][
-                        "selection_plot"
-                    ] = _save_fold_selection_plot(
-                        run_dir=run_dir,
-                        base_atoms=atoms,
-                        base_test_atoms=test_atoms,
-                        sampled_global_indices=all_indices,
-                        fold_train_indices=fold_train_indices,
-                        fold_valid_indices=fold_valid_indices,
-                        fold_number=fold_number,
-                        model_prefix=model_prefix,
-                        descriptors=descriptors,
-                    )
-            comparison_plot = _save_scratch_mae_plot(
-                run_dir,
-                base_run["aggregate_test_metrics"],
-                full_run["aggregate_test_metrics"],
-                base_run["combined_validation"]["best_epoch"],
-                full_run["combined_validation"]["best_epoch"],
-                cross_validation=True,
-            )
-            result.update(
-                {
+                    splitter = KFold(n_splits=k, shuffle=True, random_state=seed)
+                    all_indices = np.arange(len(atoms))
+                    for fold_number, (fold_train_indices, fold_valid_indices) in enumerate(
+                        splitter.split(range(len(atoms))), start=1
+                    ):
+                        model_key = f"model_{fold_number}"
+                        model_run["artifacts"][model_key]["selection_plot"] = (
+                            _save_fold_selection_plot(
+                                run_dir=run_dir, base_atoms=atoms,
+                                base_test_atoms=test_atoms,
+                                sampled_global_indices=all_indices,
+                                fold_train_indices=fold_train_indices,
+                                fold_valid_indices=fold_valid_indices,
+                                fold_number=fold_number,
+                                model_prefix=model_prefix,
+                                descriptors=descriptors,
+                            )
+                        )
+                comparison_plot = _save_scratch_mae_plot(
+                    run_dir, base_run["aggregate_test_metrics"],
+                    full_run["aggregate_test_metrics"],
+                    base_run["combined_validation"]["best_epoch"],
+                    full_run["combined_validation"]["best_epoch"],
+                    cross_validation=True,
+                )
+            completed_result = {
                     "status": "completed",
                     "config": config,
                     "transfer_learning": False,
@@ -374,13 +373,14 @@ def run_config(
                         "base_models": base_run["model_paths"],
                         "full_high_fidelity_models": full_run["model_paths"],
                     },
-                    "artifacts": {
-                        "base_models": base_run["artifacts"],
-                        "full_high_fidelity_models": full_run["artifacts"],
-                        "final_metrics_comparison_plot": comparison_plot,
-                    },
                 }
-            )
+            if generate_plots:
+                completed_result["artifacts"] = {
+                    "base_models": base_run["artifacts"],
+                    "full_high_fidelity_models": full_run["artifacts"],
+                    "final_metrics_comparison_plot": comparison_plot,
+                }
+            result.update(completed_result)
         else:
             indices = np.arange(len(base_atoms))
             train_indices, valid_indices = train_test_split(
@@ -424,6 +424,7 @@ def run_config(
                 max_epochs=base_max_epochs,
                 learning_rate=base_lr,
                 e0s=base_e0s,
+                checkpoint_epochs=checkpoint_epochs,
                 model_path=base_path,
                 on_checkpoint=lambda snapshot: checkpoint_model(
                     "base_model", snapshot
@@ -437,6 +438,7 @@ def run_config(
                 max_epochs=full_max_epochs,
                 learning_rate=full_lr,
                 e0s=full_e0s,
+                checkpoint_epochs=checkpoint_epochs,
                 model_path=full_path,
                 on_checkpoint=lambda snapshot: checkpoint_model(
                     "full_high_fidelity_model", snapshot
@@ -444,33 +446,24 @@ def run_config(
                 **common,
             )
             artifacts = {}
-            for prefix, run in (("base", base_run), ("full", full_run)):
-                artifacts[f"{prefix}_loss_plot"] = _save_loss_plot(
-                    run_dir,
-                    run["history"],
-                    title=f"{prefix.title()} model",
-                    filename=f"{prefix}_loss.png",
-                )
-                artifacts[f"{prefix}_validation_mae_plot"] = (
-                    _save_epoch_mae_plot(
-                        run_dir,
-                        run["history"],
+            if generate_plots:
+                for prefix, run in (("base", base_run), ("full", full_run)):
+                    artifacts[f"{prefix}_loss_plot"] = _save_loss_plot(
+                        run_dir, run["history"], title=f"{prefix.title()} model",
+                        filename=f"{prefix}_loss.png",
+                    )
+                    artifacts[f"{prefix}_validation_mae_plot"] = _save_epoch_mae_plot(
+                        run_dir, run["history"],
                         title=f"{prefix.title()} model validation MAE",
                         filename=f"{prefix}_validation_mae.png",
                     )
-                )
-            artifacts["final_metrics_comparison_plot"] = (
-                _save_scratch_mae_plot(
-                    run_dir,
-                    base_run["metrics"],
-                    full_run["metrics"],
+                artifacts["final_metrics_comparison_plot"] = _save_scratch_mae_plot(
+                    run_dir, base_run["metrics"], full_run["metrics"],
                     base_run["history"]["best_epoch"],
                     full_run["history"]["best_epoch"],
                     cross_validation=False,
                 )
-            )
-            result.update(
-                {
+            completed_result = {
                     "status": "completed",
                     "config": config,
                     "transfer_learning": False,
@@ -514,9 +507,10 @@ def run_config(
                         "base_model": str(base_path),
                         "full_high_fidelity_model": str(full_path),
                     },
-                    "artifacts": artifacts,
                 }
-            )
+            if generate_plots:
+                completed_result["artifacts"] = artifacts
+            result.update(completed_result)
 
         _write_json(result_path, result)
         return result_path

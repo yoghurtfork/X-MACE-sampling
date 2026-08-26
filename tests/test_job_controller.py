@@ -160,6 +160,8 @@ class SingleTrainerTests(unittest.TestCase):
                         "batch_size": 3,
                         "max_epochs": 12,
                         "full_learning_rate": 0.02,
+                        "checkpoint_epochs": 3,
+                        "verbose": True,
                         "full_E0s": {"C": -1.5},
                         "preset": "test-preset",
                         "load_base": None,
@@ -181,8 +183,8 @@ class SingleTrainerTests(unittest.TestCase):
                 patch.object(single_trainer, "_read_atoms", side_effect=[[1, 2, 3, 4], [5]]),
                 patch.object(single_trainer, "_validate_device", return_value="cpu"),
                 patch.object(single_trainer, "_train_model", return_value=model_run) as train_model,
-                patch.object(single_trainer, "_save_loss_plot", return_value="loss.png"),
-                patch.object(single_trainer, "_save_epoch_mae_plot", return_value="mae.png"),
+                patch.object(single_trainer, "_save_loss_plot", return_value="loss.png") as save_loss_plot,
+                patch.object(single_trainer, "_save_epoch_mae_plot", return_value="mae.png") as save_mae_plot,
             ):
                 result_path = single_trainer.run_config(config_path, root, run_dir)
             kwargs = train_model.call_args.kwargs
@@ -193,11 +195,59 @@ class SingleTrainerTests(unittest.TestCase):
             self.assertEqual(kwargs["preset"], "test-preset")
             self.assertEqual(kwargs["load_base"], None)
             self.assertEqual(kwargs["e0s"]["C"], -1.5)
+            self.assertEqual(kwargs["checkpoint_epochs"], 3)
             result = json.loads(result_path.read_text(encoding="utf-8"))
             self.assertEqual(result["run"], "just_full")
             self.assertIn("full_high_fidelity_model", result["models"])
             self.assertNotIn("base_model", result["models"])
             self.assertNotIn("final_metrics_comparison_plot", result["artifacts"])
+            save_loss_plot.assert_called_once()
+            save_mae_plot.assert_called_once()
+
+    def test_single_stage_verbose_false_skips_plots_and_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path = root / "single.json"
+            run_dir = root / "run_0"
+            run_dir.mkdir()
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "transfer_learning": False,
+                        "run": "just_base",
+                        "base_xyz": "base.xyz",
+                        "base_test_xyz": "base_test.xyz",
+                        "cross_validation": False,
+                        "verbose": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            model_run = {
+                "model": {"weights": "test"},
+                "history": {"best_epoch": 1},
+                "metrics": {"energy": 0.1},
+                "training_seconds": 1.0,
+                "max_epochs": 1,
+                "learning_rate": 0.001,
+                "E0s": {"C": -1.5},
+            }
+            with (
+                patch.object(single_trainer, "_import_project_modules", return_value=self._modules()),
+                patch.object(single_trainer, "_read_atoms", side_effect=[[1, 2], [3]]),
+                patch.object(single_trainer, "_validate_device", return_value="cpu"),
+                patch.object(single_trainer, "_train_model", return_value=model_run),
+                patch.object(single_trainer, "_save_loss_plot") as save_loss_plot,
+                patch.object(single_trainer, "_save_epoch_mae_plot") as save_mae_plot,
+            ):
+                result_path = single_trainer.run_config(config_path, root, run_dir)
+
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            self.assertEqual(result["status"], "completed")
+            self.assertIn("base_model", result["models"])
+            self.assertNotIn("artifacts", result)
+            save_loss_plot.assert_not_called()
+            save_mae_plot.assert_not_called()
 
     def test_base_cross_validation_uses_base_inputs_only(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -216,6 +266,7 @@ class SingleTrainerTests(unittest.TestCase):
                         "k": 2,
                         "base_max_epochs": 9,
                         "base_learning_rate": 0.03,
+                        "checkpoint_epochs": 4,
                     }
                 ),
                 encoding="utf-8",
@@ -239,6 +290,7 @@ class SingleTrainerTests(unittest.TestCase):
             self.assertEqual(kwargs["k"], 2)
             self.assertEqual(kwargs["max_epochs"], 9)
             self.assertEqual(kwargs["learning_rate"], 0.03)
+            self.assertEqual(kwargs["checkpoint_epochs"], 4)
             self.assertIsNone(kwargs["e0s"])
             result = json.loads(result_path.read_text(encoding="utf-8"))
             self.assertEqual(result["E0s"], {"base": {"C": -1.5}})
@@ -271,7 +323,10 @@ class AutomaticE0Tests(unittest.TestCase):
         def __init__(self, **kwargs):
             pass
 
-        def train_model(self, model, train_loader, valid_loader, loss_fn):
+        def train_model(
+            self, model, train_loader, valid_loader, loss_fn,
+            checkpoint_epoch=None,
+        ):
             return model, {"best_epoch": 1}
 
     @staticmethod
@@ -322,6 +377,43 @@ class AutomaticE0Tests(unittest.TestCase):
         self.assertEqual(builder.load_calls[0][0], training_pool)
         self.assertEqual(builder.load_calls[1][0], ["test_0"])
 
+    def test_cross_validation_verbose_false_skips_fold_plots(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary_dir,
+            patch.object(helper, "seed_everything"),
+            patch.object(helper, "_evaluate", return_value=self._metrics()),
+            patch.object(helper, "_save_loss_plot") as save_loss_plot,
+            patch.object(helper, "_save_epoch_mae_plot") as save_mae_plot,
+            patch.object(helper, "_save_model"),
+        ):
+            result = helper._train_k_fold_models(
+                initial_model=self._Model(),
+                all_atoms=["train_0", "train_1", "train_2", "train_3"],
+                test_atoms=["test_0"],
+                model_prefix="model",
+                run_dir=Path(temporary_dir),
+                data_builder_class=self._Builder,
+                trainer_class=self._Trainer,
+                tester=object(),
+                loss_fn=object(),
+                device="cpu",
+                seed=42,
+                k=2,
+                r_max=5.0,
+                batch_size=2,
+                max_epochs=1,
+                learning_rate=0.001,
+                trainer_options={},
+                energy_key="REF_energy",
+                forces_key="REF_forces",
+                e0s=None,
+                generate_plots=False,
+            )
+
+        self.assertNotIn("artifacts", result)
+        save_loss_plot.assert_not_called()
+        save_mae_plot.assert_not_called()
+
 
 class TrainingCheckpointTests(unittest.TestCase):
     class _Builder(AutomaticE0Tests._Builder):
@@ -334,14 +426,23 @@ class TrainingCheckpointTests(unittest.TestCase):
         def __init__(self, **kwargs):
             pass
 
-        def train_model(self, model, train_loader, valid_loader, loss_fn):
+        def train_model(
+            self, model, train_loader, valid_loader, loss_fn,
+            checkpoint_epoch=None,
+        ):
             raise KeyboardInterrupt
 
     class _CompletedTrainer:
+        checkpoint_epoch = None
+
         def __init__(self, **kwargs):
             pass
 
-        def train_model(self, model, train_loader, valid_loader, loss_fn):
+        def train_model(
+            self, model, train_loader, valid_loader, loss_fn,
+            checkpoint_epoch=None,
+        ):
+            self.__class__.checkpoint_epoch = checkpoint_epoch
             return model, {"best_epoch": 1}
 
     def _kwargs(self, run_dir: Path) -> dict[str, object]:
@@ -392,10 +493,68 @@ class TrainingCheckpointTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "evaluation failed"):
                 helper._train_k_fold_models(
                     trainer_class=self._CompletedTrainer,
+                    checkpoint_epochs=2,
                     **self._kwargs(Path(temporary_dir)),
                 )
 
         self.assertTrue(save_model.called)
+        self.assertEqual(self._CompletedTrainer.checkpoint_epoch, 2)
+
+    def test_checkpoint_history_contains_test_metrics(self) -> None:
+        model = torch.nn.Linear(1, 1)
+        checkpoint_state = {
+            name: value.detach().clone()
+            for name, value in model.state_dict().items()
+        }
+        history = {"checkpoint_models": [checkpoint_state]}
+        checkpoint_metrics = {
+            "energy_mae_ev": 0.2,
+            "force_mae_ev_per_ang": 0.3,
+            "energy_mae_by_state_ev": {"S0": 0.2},
+            "force_mae_by_state_ev_per_ang": {"S0": 0.3},
+        }
+        with tempfile.TemporaryDirectory() as temporary_dir, patch.object(
+            helper, "_evaluate", return_value=checkpoint_metrics
+        ):
+            checkpoint_path = Path(temporary_dir) / "model.pt"
+            helper._evaluate_checkpoint_models(
+                model,
+                history,
+                checkpoint_epochs=5,
+                model_path=checkpoint_path,
+                test_loader=object(),
+                tester=object(),
+                device=torch.device("cpu"),
+            )
+            saved_path = checkpoint_path.with_name(
+                "model_checkpoint_epoch_5.pt"
+            )
+            self.assertTrue(saved_path.is_file())
+            self.assertIsInstance(
+                helper._load_model(saved_path, torch.device("cpu")), torch.nn.Linear
+            )
+
+        self.assertEqual(
+            history["checkpoint_models"],
+            [{
+                "epoch": 5,
+                "model_path": str(saved_path),
+                "test_energy_mae": 0.2,
+                "test_force_mae": 0.3,
+            }],
+        )
+        json.dumps(history)
+
+    def test_checkpoint_epochs_validation(self) -> None:
+        self.assertIsNone(helper._checkpoint_epochs_from_config({}))
+        self.assertIsNone(helper._checkpoint_epochs_from_config({"checkpoint_epochs": None}))
+        self.assertEqual(
+            helper._checkpoint_epochs_from_config({"checkpoint_epochs": 5}), 5
+        )
+        for value in (0, -1, True, 1.5, "5", []):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "checkpoint_epochs"):
+                    helper._checkpoint_epochs_from_config({"checkpoint_epochs": value})
 
 
 class TrainingStrategyTests(unittest.TestCase):
