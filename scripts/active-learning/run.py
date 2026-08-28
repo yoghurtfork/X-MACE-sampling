@@ -204,6 +204,12 @@ def _run_rounds(
                 acquired_before=state["acquired_indices"],
             )
             store.save(state)
+        print(
+            f"[active-learning] starting round {round_number + 1}/{config.n_rounds} "
+            f"(acquired={len(state['acquired_indices'])}, "
+            f"unacquired={grid.size - len(state['acquired_indices'])})",
+            flush=True,
+        )
         _run_one_round(
             state=state,
             store=store,
@@ -386,6 +392,11 @@ def _train_final_production_model(
     begin_final_production_model(state)
     store.save(state)
     acquired_atoms = grid.reveal(state["acquired_indices"])
+    print(
+        "[active-learning] starting final production training "
+        f"(acquired={len(acquired_atoms)}, epochs={config.final_max_epochs})",
+        flush=True,
+    )
     seed_everything(config.seed)
     builder = data_builder_class(
         cutoff=config.r_max,
@@ -434,6 +445,13 @@ def _train_final_production_model(
         history["train_energy_mae"].append(float(metrics["energy_mae"]))
         history["train_force_mae"].append(float(metrics["force_mae"]))
         history["learning_rate"].append(float(learning_rate))
+        _print_final_epoch(
+            epoch=epoch,
+            max_epochs=config.final_max_epochs,
+            metrics=metrics,
+            learning_rate=learning_rate,
+            verbose=config.trainer_options["verbose"],
+        )
     history["stopped_epoch"] = config.final_max_epochs
     model_path = _save_model(model, run_dir / "final_production_model.pt")
     result: dict[str, Any] = {
@@ -463,6 +481,28 @@ def _mark_interrupted(state: dict[str, Any]) -> None:
         return
     state["final_production_model"] = {"status": "interrupted"}
     state["status"] = "interrupted"
+
+
+def _print_final_epoch(
+    *,
+    epoch: int,
+    max_epochs: int,
+    metrics: dict[str, Any],
+    learning_rate: float,
+    verbose: bool,
+) -> None:
+    """Emit final train-only progress using the existing verbose convention."""
+    if not verbose:
+        return
+    print(
+        "[active-learning] final production | "
+        f"epoch {epoch}/{max_epochs} | "
+        f"train_loss={float(metrics['loss']):.6f} | "
+        f"energy_mae={float(metrics['energy_mae']):.6f} | "
+        f"force_mae={float(metrics['force_mae']):.6f} | "
+        f"lr={learning_rate:.2e}",
+        flush=True,
+    )
 
 
 def _read_raw_config(config_path: Path) -> dict[str, Any]:

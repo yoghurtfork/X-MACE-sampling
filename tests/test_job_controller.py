@@ -385,6 +385,7 @@ class AutomaticE0Tests(unittest.TestCase):
             patch.object(helper, "_save_loss_plot") as save_loss_plot,
             patch.object(helper, "_save_epoch_mae_plot") as save_mae_plot,
             patch.object(helper, "_save_model"),
+            patch("builtins.print") as output,
         ):
             result = helper._train_k_fold_models(
                 initial_model=self._Model(),
@@ -413,6 +414,7 @@ class AutomaticE0Tests(unittest.TestCase):
         self.assertNotIn("artifacts", result)
         save_loss_plot.assert_not_called()
         save_mae_plot.assert_not_called()
+        output.assert_not_called()
 
     def test_cross_validation_uses_and_records_distinct_fold_seeds(self) -> None:
         with (
@@ -448,6 +450,55 @@ class AutomaticE0Tests(unittest.TestCase):
         self.assertEqual(seed_everything.call_args_list, [call(43), call(44)])
         self.assertEqual(result["folds"]["model_1"]["fold_seed"], 43)
         self.assertEqual(result["folds"]["model_2"]["fold_seed"], 44)
+
+    def test_cross_validation_progress_label_reports_each_fold(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary_dir,
+            patch.object(helper, "seed_everything"),
+            patch.object(helper, "_evaluate", return_value=self._metrics()),
+            patch.object(helper, "_save_model"),
+            patch("builtins.print") as output,
+        ):
+            helper._train_k_fold_models(
+                initial_model=self._Model(),
+                all_atoms=["train_0", "train_1", "train_2", "train_3"],
+                test_atoms=["test_0"],
+                model_prefix="model",
+                run_dir=Path(temporary_dir),
+                data_builder_class=self._Builder,
+                trainer_class=self._Trainer,
+                tester=object(),
+                loss_fn=object(),
+                device="cpu",
+                seed=42,
+                k=2,
+                r_max=5.0,
+                batch_size=2,
+                max_epochs=1,
+                learning_rate=0.001,
+                trainer_options={},
+                energy_key="REF_energy",
+                forces_key="REF_forces",
+                e0s=None,
+                generate_plots=False,
+                progress_label="[active-learning] round 1",
+            )
+
+        self.assertEqual(
+            output.call_args_list,
+            [
+                call(
+                    "[active-learning] round 1 | starting fold 1/2 "
+                    "(train=2, validation=2, seed=43)",
+                    flush=True,
+                ),
+                call(
+                    "[active-learning] round 1 | starting fold 2/2 "
+                    "(train=2, validation=2, seed=44)",
+                    flush=True,
+                ),
+            ],
+        )
 
 
 class TrainingCheckpointTests(unittest.TestCase):

@@ -87,6 +87,7 @@ def train_round_committee(
         strategy=strategy,
         strategy_kwargs=strategy_kwargs,
         generate_plots=generate_plots,
+        progress_label=f"[active-learning] round {round_number + 1}",
         on_fold_complete=on_fold_complete,
         on_checkpoint=on_checkpoint,
     )
