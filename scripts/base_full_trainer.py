@@ -23,7 +23,7 @@ from scripts.helper import (
     _read_atoms, _required, _save_epoch_mae_plot, _save_fold_selection_plot,
     _save_loss_plot, _save_scratch_mae_plot, _train_k_fold_models,
     _train_model, _strategy_from_config, _strategy_kwargs_from_config, _trainer_options_from_config, _validate_device,
-    _write_json, seed_everything,
+    _write_json, _test_xyz_paths_from_config, seed_everything,
 )
 
 
@@ -136,12 +136,26 @@ def run_config(
             _path(_required(config, "transfer_xyz"), config_path),
             config.get("transfer_n_geometries"),
         )
-        base_test_atoms = _read_atoms(
-            _path(_required(config, "base_test_xyz"), config_path)
+        base_test_paths = _test_xyz_paths_from_config(
+            config, "base_test_xyz", config_path
         )
-        full_test_atoms = _read_atoms(
-            _path(_required(config, "transfer_test_xyz"), config_path)
+        full_test_paths = _test_xyz_paths_from_config(
+            config, "transfer_test_xyz", config_path
         )
+        if len(base_test_paths) != len(full_test_paths):
+            raise ValueError(
+                "'base_test_xyz' and 'transfer_test_xyz' must contain the same number of test sets"
+            )
+        base_test_sets = {
+            f"test_{index}": _read_atoms(path)
+            for index, path in enumerate(base_test_paths, start=1)
+        }
+        full_test_sets = {
+            f"test_{index}": _read_atoms(path)
+            for index, path in enumerate(full_test_paths, start=1)
+        }
+        base_test_atoms = base_test_sets["test_1"]
+        full_test_atoms = full_test_sets["test_1"]
         if len(base_atoms) != len(full_atoms):
             raise ValueError("Base and transfer datasets must be aligned")
 
@@ -235,6 +249,10 @@ def run_config(
                 model_key: str, snapshot: dict[str, Any]
             ) -> None:
                 partial_runs[model_key] = snapshot
+                aggregate_by_run = {
+                    key: value["aggregate_test_metrics_by_set"] or {}
+                    for key, value in partial_runs.items()
+                }
                 progress = {
                     key: {
                         "completed_folds": value["completed_folds"],
@@ -246,8 +264,12 @@ def run_config(
                         "status": "running",
                         "cross_validation_progress": progress,
                         "metrics": {
-                            key: value["aggregate_test_metrics"]
-                            for key, value in partial_runs.items()
+                            test_key: {
+                                model_key: aggregate_by_run[model_key][test_key]
+                                for model_key in partial_runs
+                                if test_key in aggregate_by_run[model_key]
+                            }
+                            for test_key in base_test_sets
                         },
                         "cross_validation_training": partial_runs,
                         "models": {
@@ -267,6 +289,7 @@ def run_config(
                 initial_model=initial_models["base"],
                 all_atoms=base_atoms,
                 test_atoms=base_test_atoms,
+                additional_test_sets={key: value for key, value in base_test_sets.items() if key != "test_1"},
                 model_prefix="base_model",
                 max_epochs=base_max_epochs,
                 learning_rate=base_lr,
@@ -284,6 +307,7 @@ def run_config(
                 initial_model=initial_models["full"],
                 all_atoms=full_atoms,
                 test_atoms=full_test_atoms,
+                additional_test_sets={key: value for key, value in full_test_sets.items() if key != "test_1"},
                 model_prefix="full_model",
                 max_epochs=full_max_epochs,
                 learning_rate=full_lr,
@@ -343,6 +367,15 @@ def run_config(
                         "preset": preset,
                         "load_base": load_base,
                     },
+                    "test_sets": {
+                        key: {
+                            "base_xyz": str(base_test_paths[index]),
+                            "transfer_xyz": str(full_test_paths[index]),
+                            "base": len(base_test_sets[key]),
+                            "transfer": len(full_test_sets[key]),
+                        }
+                        for index, key in enumerate(base_test_sets)
+                    },
                     "dataset_sizes": {
                         "base": len(base_atoms),
                         "transfer": len(full_atoms),
@@ -350,10 +383,11 @@ def run_config(
                         "transfer_test": len(full_test_atoms),
                     },
                     "metrics": {
-                        "base_models": base_run["aggregate_test_metrics"],
-                        "full_high_fidelity_models": full_run[
-                            "aggregate_test_metrics"
-                        ],
+                        key: {
+                            "base_models": base_run["aggregate_test_metrics_by_set"][key],
+                            "full_high_fidelity_models": full_run["aggregate_test_metrics_by_set"][key],
+                        }
+                        for key in base_test_sets
                     },
                     "cross_validation_training": {
                         "base_models": base_run,
@@ -421,6 +455,7 @@ def run_config(
                 train_atoms=[base_atoms[i] for i in train_indices],
                 valid_atoms=[base_atoms[i] for i in valid_indices],
                 test_atoms=base_test_atoms,
+                additional_test_sets={key: value for key, value in base_test_sets.items() if key != "test_1"},
                 max_epochs=base_max_epochs,
                 learning_rate=base_lr,
                 e0s=base_e0s,
@@ -435,6 +470,7 @@ def run_config(
                 train_atoms=[full_atoms[i] for i in train_indices],
                 valid_atoms=[full_atoms[i] for i in valid_indices],
                 test_atoms=full_test_atoms,
+                additional_test_sets={key: value for key, value in full_test_sets.items() if key != "test_1"},
                 max_epochs=full_max_epochs,
                 learning_rate=full_lr,
                 e0s=full_e0s,
@@ -477,6 +513,15 @@ def run_config(
                         "preset": preset,
                         "load_base": load_base,
                     },
+                    "test_sets": {
+                        key: {
+                            "base_xyz": str(base_test_paths[index]),
+                            "transfer_xyz": str(full_test_paths[index]),
+                            "base": len(base_test_sets[key]),
+                            "transfer": len(full_test_sets[key]),
+                        }
+                        for index, key in enumerate(base_test_sets)
+                    },
                     "dataset_sizes": {
                         "base": len(base_atoms),
                         "transfer": len(full_atoms),
@@ -488,8 +533,11 @@ def run_config(
                     "train_indices": train_indices,
                     "validation_indices": valid_indices,
                     "metrics": {
-                        "base_model": base_run["metrics"],
-                        "full_high_fidelity_model": full_run["metrics"],
+                        key: {
+                            "base_model": base_run["test_metrics"][key],
+                            "full_high_fidelity_model": full_run["test_metrics"][key],
+                        }
+                        for key in base_test_sets
                     },
                     "scratch_training": {
                         "base_model": {

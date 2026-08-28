@@ -15,6 +15,59 @@ import torch
 from scripts import job_controller
 from scripts import single_trainer
 from scripts import helper
+from scripts import base_full_trainer
+
+
+class TestXYZConfigTests(unittest.TestCase):
+    def test_test_xyz_paths_accept_string_or_array_and_resolve_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            config_path = Path(temporary_dir) / "input" / "run.json"
+            config_path.parent.mkdir()
+            expected = (config_path.parent / "first.xyz").resolve()
+            self.assertEqual(
+                helper._test_xyz_paths_from_config(
+                    {"base_test_xyz": "first.xyz"}, "base_test_xyz", config_path
+                ),
+                [expected],
+            )
+            self.assertEqual(
+                helper._test_xyz_paths_from_config(
+                    {"base_test_xyz": ["first.xyz", "second.xyz"]},
+                    "base_test_xyz",
+                    config_path,
+                ),
+                [expected, (config_path.parent / "second.xyz").resolve()],
+            )
+
+    def test_test_xyz_paths_reject_empty_or_non_string_values(self) -> None:
+        config_path = Path("run.json")
+        for value in ([], ["valid.xyz", 3], 3):
+            with self.assertRaisesRegex(ValueError, "base_test_xyz"):
+                helper._test_xyz_paths_from_config(
+                    {"base_test_xyz": value}, "base_test_xyz", config_path
+                )
+
+    def test_base_full_rejects_unpaired_test_arrays(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path = root / "run.json"
+            run_dir = root / "run_0"
+            run_dir.mkdir()
+            config_path.write_text(json.dumps({
+                "transfer_learning": False,
+                "base_xyz": "base.xyz",
+                "transfer_xyz": "transfer.xyz",
+                "base_test_xyz": ["first.xyz", "second.xyz"],
+                "transfer_test_xyz": ["full.xyz"],
+            }), encoding="utf-8")
+            with (
+                patch.object(
+                    base_full_trainer, "_import_project_modules", return_value=(object(),) * 9
+                ),
+                patch.object(base_full_trainer, "_read_atoms", return_value=[object()]),
+            ):
+                with self.assertRaisesRegex(ValueError, "same number"):
+                    base_full_trainer.run_config(config_path, root, run_dir)
 
 
 class JobControllerTests(unittest.TestCase):
@@ -377,6 +430,54 @@ class AutomaticE0Tests(unittest.TestCase):
         self.assertEqual(builder.load_calls[0][0], training_pool)
         self.assertEqual(builder.load_calls[1][0], ["test_0"])
 
+    def test_cross_validation_records_metrics_for_each_test_set(self) -> None:
+        def metrics_for(loader):
+            value = float(len(loader))
+            states = {f"S{state}": value for state in range(3)}
+            return {
+                "energy_mae_ev": value,
+                "force_mae_ev_per_ang": value,
+                "energy_mae_by_state_ev": states,
+                "force_mae_by_state_ev_per_ang": states,
+            }
+
+        with (
+            tempfile.TemporaryDirectory() as temporary_dir,
+            patch.object(helper, "seed_everything"),
+            patch.object(helper, "_evaluate", side_effect=lambda _model, loader, _tester: metrics_for(loader)) as evaluate,
+            patch.object(helper, "_save_model"),
+        ):
+            result = helper._train_k_fold_models(
+                initial_model=self._Model(),
+                all_atoms=["train_0", "train_1", "train_2", "train_3"],
+                test_atoms=["first"],
+                additional_test_sets={"test_2": ["second_a", "second_b"]},
+                model_prefix="model",
+                run_dir=Path(temporary_dir),
+                data_builder_class=self._Builder,
+                trainer_class=self._Trainer,
+                tester=object(),
+                loss_fn=object(),
+                device="cpu",
+                seed=42,
+                k=2,
+                r_max=5.0,
+                batch_size=2,
+                max_epochs=1,
+                learning_rate=0.001,
+                trainer_options={},
+                energy_key="REF_energy",
+                forces_key="REF_forces",
+                e0s=None,
+                generate_plots=False,
+            )
+
+        self.assertEqual(evaluate.call_count, 4)
+        self.assertEqual(set(result["aggregate_test_metrics_by_set"]), {"test_1", "test_2"})
+        self.assertEqual(result["aggregate_test_metrics_by_set"]["test_1"]["energy_mae_ev"]["mean"], 1.0)
+        self.assertEqual(result["aggregate_test_metrics_by_set"]["test_2"]["energy_mae_ev"]["mean"], 2.0)
+        self.assertNotIn("combined_test_metrics", result)
+
     def test_cross_validation_verbose_false_skips_fold_plots(self) -> None:
         with (
             tempfile.TemporaryDirectory() as temporary_dir,
@@ -541,6 +642,7 @@ class TrainingCheckpointTests(unittest.TestCase):
                 "model_path": str(saved_path),
                 "test_energy_mae": 0.2,
                 "test_force_mae": 0.3,
+                "test_metrics": {"test_1": checkpoint_metrics},
             }],
         )
         json.dumps(history)

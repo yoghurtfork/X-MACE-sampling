@@ -33,7 +33,7 @@ from scripts.helper import (
     _save_selection_plot, _save_split_plot, _train_k_fold_models,
     _evaluate_checkpoint_models, _save_model,
     _trainer_options_for_learning_rate, _trainer_options_from_config,
-    _strategy_from_config, _strategy_kwargs_from_config, _validate_device, _write_json, seed_everything,
+    _strategy_from_config, _strategy_kwargs_from_config, _test_xyz_paths_from_config, _validate_device, _write_json, seed_everything,
 )
 
 
@@ -128,16 +128,30 @@ def run_config(
 
         base_xyz = _path(_required(config, "base_xyz"), config_path)
         transfer_xyz = _path(_required(config, "transfer_xyz"), config_path)
-        base_test_xyz = _path(_required(config, "base_test_xyz"), config_path)
-        transfer_test_xyz = _path(
-            _required(config, "transfer_test_xyz"), config_path
+        base_test_paths = _test_xyz_paths_from_config(
+            config, "base_test_xyz", config_path
         )
+        transfer_test_paths = _test_xyz_paths_from_config(
+            config, "transfer_test_xyz", config_path
+        )
+        if len(base_test_paths) != len(transfer_test_paths):
+            raise ValueError(
+                "'base_test_xyz' and 'transfer_test_xyz' must contain the same number of test sets"
+            )
         base_atoms = _read_atoms(base_xyz, config.get("base_n_geometries"))
         transfer_atoms = _read_atoms(
             transfer_xyz, config.get("transfer_n_geometries")
         )
-        base_test_atoms = _read_atoms(base_test_xyz)
-        transfer_test_atoms = _read_atoms(transfer_test_xyz)
+        base_test_sets = {
+            f"test_{index}": _read_atoms(path)
+            for index, path in enumerate(base_test_paths, start=1)
+        }
+        transfer_test_sets = {
+            f"test_{index}": _read_atoms(path)
+            for index, path in enumerate(transfer_test_paths, start=1)
+        }
+        base_test_atoms = base_test_sets["test_1"]
+        transfer_test_atoms = transfer_test_sets["test_1"]
         if len(base_atoms) != len(transfer_atoms):
             raise ValueError(
                 "Base and transfer datasets must contain the same number "
@@ -232,16 +246,28 @@ def run_config(
             "base": _e0s_from_metadata(base_data_builder.get_metadata()),
             "full": _e0s_from_metadata(full_data_builder.get_metadata()),
         }
-        base_test_loader = base_data_builder.load(
-            base_test_atoms, batch_size=batch_size, shuffle=False
-        )
-        transfer_test_loader = full_data_builder.load(
-            transfer_test_atoms, batch_size=batch_size, shuffle=False
-        )
+        base_test_loaders = {
+            key: base_data_builder.load(atoms, batch_size=batch_size, shuffle=False)
+            for key, atoms in base_test_sets.items()
+        }
+        transfer_test_loaders = {
+            key: full_data_builder.load(atoms, batch_size=batch_size, shuffle=False)
+            for key, atoms in transfer_test_sets.items()
+        }
+        base_test_loader = base_test_loaders["test_1"]
+        transfer_test_loader = transfer_test_loaders["test_1"]
         base_model = _load_model(base_model_path, device)
         full_model = _load_model(full_model_path, device)
-        base_metrics = _evaluate(base_model, base_test_loader, tester)
-        full_metrics = _evaluate(full_model, transfer_test_loader, tester)
+        base_metrics_by_set = {
+            key: _evaluate(base_model, loader, tester)
+            for key, loader in base_test_loaders.items()
+        }
+        full_metrics_by_set = {
+            key: _evaluate(full_model, loader, tester)
+            for key, loader in transfer_test_loaders.items()
+        }
+        base_metrics = base_metrics_by_set["test_1"]
+        full_metrics = full_metrics_by_set["test_1"]
 
         descriptor_name = str(_required(config, "descriptor"))
         descriptor_kwargs = dict(config.get("descriptor_kwargs", {}))
@@ -365,6 +391,7 @@ def run_config(
             transfer_initial_model = base_model
 
             def checkpoint_transfer_fold(snapshot: dict[str, Any]) -> None:
+                aggregate_by_set = snapshot["aggregate_test_metrics_by_set"] or {}
                 checkpoint_result = {
                         "status": "running",
                         "cross_validation_progress": {
@@ -374,11 +401,12 @@ def run_config(
                             }
                         },
                         "metrics": {
-                            "base_model": base_metrics,
-                            "full_high_fidelity_model": full_metrics,
-                            "transfer_models": snapshot[
-                                "aggregate_test_metrics"
-                            ],
+                            key: {
+                                "base_model": base_metrics_by_set[key],
+                                "full_high_fidelity_model": full_metrics_by_set[key],
+                                "transfer_models": aggregate_by_set[key],
+                            }
+                            for key in base_test_sets if key in aggregate_by_set
                         },
                         "cross_validation_training": {
                             "transfer_models": snapshot
@@ -401,6 +429,7 @@ def run_config(
                 initial_model=transfer_initial_model,
                 all_atoms=sampled_atoms,
                 test_atoms=transfer_test_atoms,
+                additional_test_sets={key: value for key, value in transfer_test_sets.items() if key != "test_1"},
                 model_prefix="transfer_model",
                 run_dir=run_dir,
                 data_builder_class=AtomDataLoaderBuilder,
@@ -461,6 +490,15 @@ def run_config(
                     "device": str(device),
                     "E0s": resolved_e0s,
                     "trainer_options": trainer_options,
+                    "test_sets": {
+                        key: {
+                            "base_xyz": str(base_test_paths[index]),
+                            "transfer_xyz": str(transfer_test_paths[index]),
+                            "base": len(base_test_sets[key]),
+                            "transfer": len(transfer_test_sets[key]),
+                        }
+                        for index, key in enumerate(base_test_sets)
+                    },
                     "dataset_sizes": {
                         "base": len(base_atoms),
                         "transfer": len(transfer_atoms),
@@ -482,11 +520,12 @@ def run_config(
                         "n_samples": n_samples,
                     },
                     "metrics": {
-                        "base_model": base_metrics,
-                        "full_high_fidelity_model": full_metrics,
-                        "transfer_models": transfer_cv[
-                            "aggregate_test_metrics"
-                        ],
+                        key: {
+                            "base_model": base_metrics_by_set[key],
+                            "full_high_fidelity_model": full_metrics_by_set[key],
+                            "transfer_models": transfer_cv["aggregate_test_metrics_by_set"][key],
+                        }
+                        for key in base_test_sets
                     },
                     "cross_validation_training": {
                         "transfer_models": {
@@ -496,6 +535,9 @@ def run_config(
                             ],
                             "aggregate_test_metrics": transfer_cv[
                                 "aggregate_test_metrics"
+                            ],
+                            "aggregate_test_metrics_by_set": transfer_cv[
+                                "aggregate_test_metrics_by_set"
                             ],
                             "training_seconds": transfer_cv[
                                 "training_seconds"
@@ -563,6 +605,10 @@ def run_config(
             checkpoint_epochs=checkpoint_epochs,
             model_path=transfer_model_path,
             test_loader=transfer_test_loader,
+            additional_test_loaders={
+                key: loader for key, loader in transfer_test_loaders.items()
+                if key != "test_1"
+            },
             tester=tester,
             device=device,
         )
@@ -577,15 +623,21 @@ def run_config(
             },
         })
         _write_json(result_path, result)
-        transfer_metrics = _evaluate(
-            transfer_model, transfer_test_loader, tester
-        )
-        transfer_metrics["best_epoch"] = int(transfer_history["best_epoch"])
+        transfer_metrics_by_set = {
+            key: _evaluate(transfer_model, loader, tester)
+            for key, loader in transfer_test_loaders.items()
+        }
+        for metrics in transfer_metrics_by_set.values():
+            metrics["best_epoch"] = int(transfer_history["best_epoch"])
+        transfer_metrics = transfer_metrics_by_set["test_1"]
         result.update({
             "metrics": {
-                "base_model": base_metrics,
-                "full_high_fidelity_model": full_metrics,
-                "transfer_model": transfer_metrics,
+                key: {
+                    "base_model": base_metrics_by_set[key],
+                    "full_high_fidelity_model": full_metrics_by_set[key],
+                    "transfer_model": transfer_metrics_by_set[key],
+                }
+                for key in base_test_sets
             },
             "transfer_training": {
                 "status": "evaluated_pending_artifacts",
@@ -614,6 +666,15 @@ def run_config(
                 "device": str(device),
                 "E0s": resolved_e0s,
                 "trainer_options": trainer_options,
+                "test_sets": {
+                    key: {
+                        "base_xyz": str(base_test_paths[index]),
+                        "transfer_xyz": str(transfer_test_paths[index]),
+                        "base": len(base_test_sets[key]),
+                        "transfer": len(transfer_test_sets[key]),
+                    }
+                    for index, key in enumerate(base_test_sets)
+                },
                 "dataset_sizes": {
                     "base": len(base_atoms),
                     "transfer": len(transfer_atoms),
@@ -638,9 +699,12 @@ def run_config(
                     "n_samples": n_samples,
                 },
                 "metrics": {
-                    "base_model": base_metrics,
-                    "full_high_fidelity_model": full_metrics,
-                    "transfer_model": transfer_metrics,
+                    key: {
+                        "base_model": base_metrics_by_set[key],
+                        "full_high_fidelity_model": full_metrics_by_set[key],
+                        "transfer_model": transfer_metrics_by_set[key],
+                    }
+                    for key in base_test_sets
                 },
                 "transfer_training": {
                     "status": "completed",
