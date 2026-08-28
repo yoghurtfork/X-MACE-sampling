@@ -941,7 +941,6 @@ def _train_k_fold_models(
     test_loader = builder.load(
         test_atoms, batch_size=batch_size, shuffle=False
     )
-    seed_everything(seed)
     started_at = time.time()
     fold_results: dict[str, dict[str, Any]] = {}
     artifacts: dict[str, dict[str, str]] = {}
@@ -950,6 +949,11 @@ def _train_k_fold_models(
     for fold_number, (train_indices, valid_indices) in enumerate(
         splitter.split(range(len(all_atoms))), start=1
     ):
+        fold_seed = seed + fold_number
+        # Reset immediately before creating the shuffled loader and training
+        # this fold, so each member of the committee is reproducible on its
+        # own while retaining the deterministic KFold partition above.
+        seed_everything(fold_seed)
         train_loader = builder.load(
             [all_atoms[index] for index in train_indices],
             batch_size=batch_size,
@@ -991,6 +995,7 @@ def _train_k_fold_models(
                     include_artifacts=generate_plots,
                     current_fold={
                         "key": model_key,
+                        "fold_seed": fold_seed,
                         "status": "interrupted",
                         "model_path": str(model_path),
                     },
@@ -1014,6 +1019,7 @@ def _train_k_fold_models(
                 include_artifacts=generate_plots,
                 current_fold={
                     "key": model_key,
+                    "fold_seed": fold_seed,
                     "status": "trained_pending_evaluation",
                     "model_path": str(model_path),
                     "history": history,
@@ -1022,6 +1028,7 @@ def _train_k_fold_models(
         metrics = _evaluate(fold_model, test_loader, tester)
         metrics["best_epoch"] = int(history["best_epoch"])
         fold_results[model_key] = {
+            "fold_seed": fold_seed,
             "history": history,
             "metrics": metrics,
             "model_path": str(model_path),
@@ -1034,6 +1041,7 @@ def _train_k_fold_models(
                 include_artifacts=generate_plots,
                 current_fold={
                     "key": model_key,
+                    "fold_seed": fold_seed,
                     "status": "evaluated_pending_artifacts",
                     "model_path": str(model_path),
                 },
