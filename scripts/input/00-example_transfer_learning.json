@@ -6,8 +6,12 @@
   "k": 5,
   "base_xyz": "../../data/A02_propene_grid_static_CASSCF.xyz",
   "transfer_xyz": "../../data/A02_propene_grid_static_SA3-NEVPT2_22_molcas.xyz",
-  "base_test_xyz": "../../data/A02_propene_offgrid_128_sobol_2e2o.xyz",
-  "transfer_test_xyz": "../../data/A02_propene_offgrid_SA3-NEVPT2_22_molcas.xyz",
+  "base_test_xyz": [
+    "../../data/A02_propene_offgrid_128_sobol_2e2o.xyz"
+  ],
+  "transfer_test_xyz": [
+    "../../data/A02_propene_offgrid_SA3-NEVPT2_22_molcas.xyz"
+  ],
   "base_model_path": "../../outputs/base_models/base_propene_all_3731_geom_CASSCF_172_epoch_ani500k_cuda_run5bestfold.pt",
   "full_model_path": "../../outputs/full_models/full_model_all_3731_geom_NEVPT2_119_epoch_ani500k_cuda_run5bestfold.pt",
   "base_n_geometries": 3731,

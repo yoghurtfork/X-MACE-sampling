@@ -22,7 +22,7 @@ from scripts.helper import (
     _next_run_dir, _path, _read_atoms, _required, _save_epoch_mae_plot,
     _save_fold_selection_plot, _save_loss_plot, _train_k_fold_models,
     _train_model, _strategy_from_config, _strategy_kwargs_from_config, _trainer_options_from_config, _validate_device, _write_json,
-    seed_everything,
+    _test_xyz_paths_from_config, seed_everything,
 )
 
 
@@ -131,7 +131,14 @@ def run_config(config_path: Path, output_dir: Path, run_dir: Path | None = None)
             raise ValueError("'load_base' must be a non-empty string, true, false, or null")
 
         atoms = _read_atoms(_path(_required(config, stage["xyz_key"]), config_path), config.get(stage["count_key"]))
-        test_atoms = _read_atoms(_path(_required(config, stage["test_xyz_key"]), config_path))
+        test_paths = _test_xyz_paths_from_config(
+            config, stage["test_xyz_key"], config_path
+        )
+        test_sets = {
+            f"test_{index}": _read_atoms(path)
+            for index, path in enumerate(test_paths, start=1)
+        }
+        test_atoms = test_sets["test_1"]
         tester = Tester(device=device)
         loss_defaults = {"energy_weight": 1.0, "forces_weight": 5.0, "dipoles_weight": 0.0, "nacs_weight": 0.0, "socs_weight": 0.0}
         loss_defaults.update(config.get("loss_kwargs", {}))
@@ -149,7 +156,8 @@ def run_config(config_path: Path, output_dir: Path, run_dir: Path | None = None)
 
             def checkpoint(snapshot: dict[str, Any]) -> None:
                 partial_run.update(snapshot)
-                checkpoint_result = {"cross_validation_progress": {stage["cv_model_key"]: {"completed_folds": snapshot["completed_folds"], "total_folds": snapshot["total_folds"]}}, "metrics": {stage["cv_model_key"]: snapshot["aggregate_test_metrics"]}, "cross_validation_training": {stage["cv_model_key"]: snapshot}, "models": {stage["cv_model_key"]: snapshot["model_paths"]}}
+                aggregate_by_set = snapshot["aggregate_test_metrics_by_set"] or {}
+                checkpoint_result = {"cross_validation_progress": {stage["cv_model_key"]: {"completed_folds": snapshot["completed_folds"], "total_folds": snapshot["total_folds"]}}, "metrics": {key: {stage["cv_model_key"]: aggregate_by_set[key]} for key in test_sets if key in aggregate_by_set}, "cross_validation_training": {stage["cv_model_key"]: snapshot}, "models": {stage["cv_model_key"]: snapshot["model_paths"]}}
                 if generate_plots:
                     checkpoint_result["artifacts"] = {stage["cv_model_key"]: snapshot["artifacts"]}
                 result.update(checkpoint_result)
@@ -157,6 +165,7 @@ def run_config(config_path: Path, output_dir: Path, run_dir: Path | None = None)
 
             model_run = _train_k_fold_models(
                 initial_model=initial_model, all_atoms=atoms, test_atoms=test_atoms,
+                additional_test_sets={key: value for key, value in test_sets.items() if key != "test_1"},
                 model_prefix=stage["model_prefix"], run_dir=run_dir,
                 data_builder_class=AtomDataLoaderBuilder, trainer_class=Trainer,
                 tester=tester, loss_fn=loss_fn, device=device, seed=seed, k=k,
@@ -174,7 +183,11 @@ def run_config(config_path: Path, output_dir: Path, run_dir: Path | None = None)
                 splitter = KFold(n_splits=k, shuffle=True, random_state=seed)
                 for fold_number, (train_indices, valid_indices) in enumerate(splitter.split(range(len(atoms))), start=1):
                     model_run["artifacts"][f"model_{fold_number}"]["selection_plot"] = _save_fold_selection_plot(run_dir=run_dir, base_atoms=atoms, base_test_atoms=test_atoms, sampled_global_indices=np.arange(len(atoms)), fold_train_indices=train_indices, fold_valid_indices=valid_indices, fold_number=fold_number, model_prefix=stage["model_prefix"], descriptors=descriptors)
-            completed_result = {"status": "completed", "config": config, "transfer_learning": False, "cross_validation": True, "k": k, "seed": seed, "device": str(device), "E0s": {stage["size_key"]: resolved_e0s}, "trainer_options": trainer_options, "model_initialization": {"preset": preset, "load_base": load_base}, "dataset_sizes": {stage["size_key"]: len(atoms), f"{stage['size_key']}_test": len(test_atoms)}, "metrics": {stage["cv_model_key"]: model_run["aggregate_test_metrics"]}, "cross_validation_training": {stage["cv_model_key"]: model_run}, "cross_validation_progress": {stage["cv_model_key"]: {"completed_folds": model_run["completed_folds"], "total_folds": model_run["total_folds"]}}, "models": {stage["cv_model_key"]: model_run["model_paths"]}}
+            aggregate_metrics_by_set = model_run.get(
+                "aggregate_test_metrics_by_set",
+                {"test_1": model_run["aggregate_test_metrics"]},
+            )
+            completed_result = {"status": "completed", "config": config, "transfer_learning": False, "cross_validation": True, "k": k, "seed": seed, "device": str(device), "E0s": {stage["size_key"]: resolved_e0s}, "trainer_options": trainer_options, "model_initialization": {"preset": preset, "load_base": load_base}, "test_sets": {key: {"xyz": str(test_paths[index]), "size": len(test_sets[key])} for index, key in enumerate(test_sets)}, "dataset_sizes": {stage["size_key"]: len(atoms), f"{stage['size_key']}_test": len(test_atoms)}, "metrics": {key: {stage["cv_model_key"]: aggregate_metrics_by_set[key]} for key in test_sets}, "cross_validation_training": {stage["cv_model_key"]: model_run}, "cross_validation_progress": {stage["cv_model_key"]: {"completed_folds": model_run["completed_folds"], "total_folds": model_run["total_folds"]}}, "models": {stage["cv_model_key"]: model_run["model_paths"]}}
             if generate_plots:
                 completed_result["artifacts"] = {stage["cv_model_key"]: model_run["artifacts"]}
             result.update(completed_result)
@@ -190,8 +203,9 @@ def run_config(config_path: Path, output_dir: Path, run_dir: Path | None = None)
                 })
                 _write_json(result_path, result)
 
-            model_run = _train_model(train_atoms=[atoms[i] for i in train_indices], valid_atoms=[atoms[i] for i in valid_indices], test_atoms=test_atoms, builder_class=AtomDataLoaderBuilder, trainer_class=Trainer, initialise_autoencoder=initialise_autoencoder, tester=tester, loss_fn=loss_fn, device=device, seed=seed, r_max=r_max, batch_size=batch_size, max_epochs=stage_epochs, learning_rate=learning_rate, trainer_options=trainer_options, energy_key=energy_key, forces_key=forces_key, preset=preset, load_base=load_base, e0s=e0s, checkpoint_epochs=checkpoint_epochs, strategy=strategy, strategy_kwargs=strategy_kwargs, model_path=model_path, on_checkpoint=checkpoint_model)
-            completed_result = {"status": "completed", "config": config, "transfer_learning": False, "cross_validation": False, "seed": seed, "device": str(device), "E0s": {stage["size_key"]: model_run["E0s"]}, "trainer_options": trainer_options, "model_initialization": {"preset": preset, "load_base": load_base}, "dataset_sizes": {stage["size_key"]: len(atoms), f"{stage['size_key']}_test": len(test_atoms), "train": len(train_indices), "validation": len(valid_indices)}, "train_indices": train_indices, "validation_indices": valid_indices, "metrics": {stage["model_key"]: model_run["metrics"]}, "scratch_training": {stage["model_key"]: {key: value for key, value in model_run.items() if key != "model"}}, "models": {stage["model_key"]: str(model_path)}}
+            model_run = _train_model(train_atoms=[atoms[i] for i in train_indices], valid_atoms=[atoms[i] for i in valid_indices], test_atoms=test_atoms, additional_test_sets={key: value for key, value in test_sets.items() if key != "test_1"}, builder_class=AtomDataLoaderBuilder, trainer_class=Trainer, initialise_autoencoder=initialise_autoencoder, tester=tester, loss_fn=loss_fn, device=device, seed=seed, r_max=r_max, batch_size=batch_size, max_epochs=stage_epochs, learning_rate=learning_rate, trainer_options=trainer_options, energy_key=energy_key, forces_key=forces_key, preset=preset, load_base=load_base, e0s=e0s, checkpoint_epochs=checkpoint_epochs, strategy=strategy, strategy_kwargs=strategy_kwargs, model_path=model_path, on_checkpoint=checkpoint_model)
+            test_metrics = model_run.get("test_metrics", {"test_1": model_run["metrics"]})
+            completed_result = {"status": "completed", "config": config, "transfer_learning": False, "cross_validation": False, "seed": seed, "device": str(device), "E0s": {stage["size_key"]: model_run["E0s"]}, "trainer_options": trainer_options, "model_initialization": {"preset": preset, "load_base": load_base}, "test_sets": {key: {"xyz": str(test_paths[index]), "size": len(test_sets[key])} for index, key in enumerate(test_sets)}, "dataset_sizes": {stage["size_key"]: len(atoms), f"{stage['size_key']}_test": len(test_atoms), "train": len(train_indices), "validation": len(valid_indices)}, "train_indices": train_indices, "validation_indices": valid_indices, "metrics": {key: {stage["model_key"]: test_metrics[key]} for key in test_sets}, "scratch_training": {stage["model_key"]: {key: value for key, value in model_run.items() if key != "model"}}, "models": {stage["model_key"]: str(model_path)}}
             if generate_plots:
                 completed_result["artifacts"] = {"loss_plot": _save_loss_plot(run_dir, model_run["history"], title=f"{stage['label'].title()} model", filename=f"{stage['model_prefix']}_loss.png"), "validation_mae_plot": _save_epoch_mae_plot(run_dir, model_run["history"], title=f"{stage['label'].title()} model validation MAE", filename=f"{stage['model_prefix']}_validation_mae.png")}
             result.update(completed_result)

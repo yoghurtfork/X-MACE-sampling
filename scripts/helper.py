@@ -278,6 +278,22 @@ def _path(value: str, config_path: Path) -> Path:
     return path.resolve()
 
 
+def _test_xyz_paths_from_config(
+    config: dict[str, Any], key: str, config_path: Path
+) -> list[Path]:
+    """Resolve one or more required test XYZ paths from a configuration."""
+    value = _required(config, key)
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, list):
+        values = value
+    else:
+        raise ValueError(f"'{key}' must be a JSON string or non-empty array of strings")
+    if not values or not all(isinstance(item, str) and item for item in values):
+        raise ValueError(f"'{key}' must be a JSON string or non-empty array of strings")
+    return [_path(item, config_path) for item in values]
+
+
 def _read_atoms(path: Path, limit: int | None = None) -> list[Any]:
     if not path.is_file():
         raise FileNotFoundError(f"XYZ file does not exist: {path}")
@@ -369,6 +385,7 @@ def _evaluate_checkpoint_models(
     checkpoint_epochs: int | None,
     model_path: Path | None,
     test_loader: Any,
+    additional_test_loaders: dict[str, Any] | None = None,
     tester: Any,
     device: torch.device,
 ) -> None:
@@ -393,13 +410,19 @@ def _evaluate_checkpoint_models(
             f"{model_path.stem}_checkpoint_epoch_{epoch}{model_path.suffix}"
         )
         saved_path = _save_model(checkpoint_model, checkpoint_path)
-        metrics = _evaluate(checkpoint_model, test_loader, tester)
+        test_metrics = {"test_1": _evaluate(checkpoint_model, test_loader, tester)}
+        test_metrics.update({
+            name: _evaluate(checkpoint_model, loader, tester)
+            for name, loader in (additional_test_loaders or {}).items()
+        })
+        metrics = test_metrics["test_1"]
         checkpoint_metrics.append(
             {
                 "epoch": epoch,
                 "model_path": str(saved_path),
                 "test_energy_mae": metrics["energy_mae_ev"],
                 "test_force_mae": metrics["force_mae_ev_per_ang"],
+                "test_metrics": test_metrics,
             }
         )
     history["checkpoint_models"] = checkpoint_metrics
@@ -898,6 +921,7 @@ def _train_k_fold_models(
     initial_model: torch.nn.Module,
     all_atoms: list[Any],
     test_atoms: list[Any],
+    additional_test_sets: dict[str, list[Any]] | None = None,
     model_prefix: str,
     run_dir: Path,
     data_builder_class: Any,
@@ -938,9 +962,12 @@ def _train_k_fold_models(
     # than from the held-out test data.
     builder.load(all_atoms, batch_size=batch_size, shuffle=False)
     resolved_e0s = _e0s_from_metadata(builder.get_metadata())
-    test_loader = builder.load(
-        test_atoms, batch_size=batch_size, shuffle=False
-    )
+    test_loaders = {
+        "test_1": builder.load(test_atoms, batch_size=batch_size, shuffle=False)
+    }
+    for name, atoms in (additional_test_sets or {}).items():
+        test_loaders[name] = builder.load(atoms, batch_size=batch_size, shuffle=False)
+    test_loader = test_loaders["test_1"]
     seed_everything(seed)
     started_at = time.time()
     fold_results: dict[str, dict[str, Any]] = {}
@@ -1003,6 +1030,10 @@ def _train_k_fold_models(
             checkpoint_epochs=checkpoint_epochs,
             model_path=model_path,
             test_loader=test_loader,
+            additional_test_loaders={
+                name: loader for name, loader in test_loaders.items()
+                if name != "test_1"
+            },
             tester=tester,
             device=device,
         )
@@ -1019,11 +1050,16 @@ def _train_k_fold_models(
                     "history": history,
                 },
             ))
-        metrics = _evaluate(fold_model, test_loader, tester)
-        metrics["best_epoch"] = int(history["best_epoch"])
+        test_metrics = {
+            name: _evaluate(fold_model, loader, tester)
+            for name, loader in test_loaders.items()
+        }
+        for metrics in test_metrics.values():
+            metrics["best_epoch"] = int(history["best_epoch"])
         fold_results[model_key] = {
             "history": history,
-            "metrics": metrics,
+            "metrics": test_metrics["test_1"],
+            "test_metrics": test_metrics,
             "model_path": str(model_path),
         }
         model_paths[model_key] = str(model_path)
@@ -1097,14 +1133,23 @@ def _cross_validation_snapshot(
         combined_validation: dict[str, Any] | None = {
             "best_epoch": [float(np.mean(best_epochs)), float(np.var(best_epochs))]
         }
-        aggregate_metrics: dict[str, Any] | None = _aggregate_fold_metrics(fold_results)
+        aggregate_metrics_by_set = {
+            test_name: _aggregate_fold_metrics({
+                fold_name: {"metrics": fold["test_metrics"][test_name]}
+                for fold_name, fold in fold_results.items()
+            })
+            for test_name in fold_results[next(iter(fold_results))]["test_metrics"]
+        }
+        aggregate_metrics: dict[str, Any] | None = aggregate_metrics_by_set["test_1"]
     else:
         combined_validation = None
         aggregate_metrics = None
+        aggregate_metrics_by_set = None
     snapshot = {
         "folds": fold_results,
         "combined_validation": combined_validation,
         "aggregate_test_metrics": aggregate_metrics,
+        "aggregate_test_metrics_by_set": aggregate_metrics_by_set,
         "training_seconds": time.time() - started_at,
         "model_paths": model_paths,
         "completed_folds": len(fold_results),
@@ -1273,6 +1318,7 @@ def _train_model(
     train_atoms: list[Any],
     valid_atoms: list[Any],
     test_atoms: list[Any],
+    additional_test_sets: dict[str, list[Any]] | None = None,
     builder_class: Any,
     trainer_class: Any,
     initialise_autoencoder: Any,
@@ -1308,9 +1354,12 @@ def _train_model(
     valid_loader = builder.load(
         valid_atoms, batch_size=batch_size, shuffle=False
     )
-    test_loader = builder.load(
-        test_atoms, batch_size=batch_size, shuffle=False
-    )
+    test_loaders = {
+        "test_1": builder.load(test_atoms, batch_size=batch_size, shuffle=False)
+    }
+    for name, atoms in (additional_test_sets or {}).items():
+        test_loaders[name] = builder.load(atoms, batch_size=batch_size, shuffle=False)
+    test_loader = test_loaders["test_1"]
     resolved_e0s = _e0s_from_metadata(builder.get_metadata())
     seed_everything(seed)
     model = initialise_autoencoder(
@@ -1351,6 +1400,10 @@ def _train_model(
         checkpoint_epochs=checkpoint_epochs,
         model_path=model_path,
         test_loader=test_loader,
+        additional_test_loaders={
+            name: loader for name, loader in test_loaders.items()
+            if name != "test_1"
+        },
         tester=tester,
         device=device,
     )
@@ -1363,14 +1416,20 @@ def _train_model(
                 "training_seconds": time.time() - started_at,
                 "E0s": resolved_e0s,
             })
-    metrics = _evaluate(model, test_loader, tester)
-    metrics["best_epoch"] = int(history["best_epoch"])
+    test_metrics = {
+        name: _evaluate(model, loader, tester)
+        for name, loader in test_loaders.items()
+    }
+    for metrics in test_metrics.values():
+        metrics["best_epoch"] = int(history["best_epoch"])
+    metrics = test_metrics["test_1"]
     if model_path is not None and on_checkpoint is not None:
         on_checkpoint({
             "status": "evaluated_pending_artifacts",
             "model_path": str(model_path.resolve()),
             "history": history,
             "metrics": metrics,
+            "test_metrics": test_metrics,
             "training_seconds": time.time() - started_at,
             "E0s": resolved_e0s,
         })
@@ -1378,6 +1437,7 @@ def _train_model(
         "model": model,
         "history": history,
         "metrics": metrics,
+        "test_metrics": test_metrics,
         "training_seconds": time.time() - started_at,
         "max_epochs": max_epochs,
         "learning_rate": learning_rate,
