@@ -320,6 +320,12 @@ def _run_one_round(
     _complete_round(
         state, store, committee.training, evaluation_source, unacquired,
         uncertainty.score, grid, config, selection=selection,
+        committee_uncertainty_by_index=_per_point_committee_uncertainty(
+            unacquired,
+            uncertainty.energy_std,
+            uncertainty.force_std,
+            uncertainty.score,
+        ),
     )
     if not len(selection.seed_indices):
         state["termination_reason"] = "No unacquired point exceeded the uncertainty threshold"
@@ -337,6 +343,7 @@ def _complete_round(
     config: ActiveLearningConfig,
     *,
     selection: Any | None = None,
+    committee_uncertainty_by_index: list[dict[str, float | int]] | None = None,
 ) -> None:
     if selection is None:
         selection_summary = {
@@ -367,10 +374,33 @@ def _complete_round(
         state,
         committee={**committee, "evaluation_source": evaluation_source},
         uncertainty=uncertainty_summary,
+        committee_uncertainty_by_index=committee_uncertainty_by_index or (),
         selection=selection_summary,
         acquired_after=acquired_after,
     )
     store.save(state)
+
+
+def _per_point_committee_uncertainty(
+    indices: np.ndarray,
+    energy_std: np.ndarray,
+    force_std: np.ndarray,
+    score: np.ndarray,
+) -> list[dict[str, float | int]]:
+    """Pair each unacquired grid index with its committee uncertainty values."""
+    if not (len(indices) == len(energy_std) == len(force_std) == len(score)):
+        raise ValueError("Committee uncertainty arrays must align with candidate indices")
+    return [
+        {
+            "index": int(index),
+            "energy_std": float(point_energy_std),
+            "force_std": float(point_force_std),
+            "score": float(point_score),
+        }
+        for index, point_energy_std, point_force_std, point_score in zip(
+            indices, energy_std, force_std, score
+        )
+    ]
 
 
 def _train_final_production_model(

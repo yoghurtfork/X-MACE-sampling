@@ -142,6 +142,7 @@ def complete_current_round(
     *,
     committee: Mapping[str, Any],
     uncertainty: Mapping[str, Any],
+    committee_uncertainty_by_index: Iterable[Mapping[str, Any]] = (),
     selection: Mapping[str, Any],
     acquired_after: Iterable[int],
 ) -> None:
@@ -153,11 +154,15 @@ def complete_current_round(
     previous = set(record["acquired_before_indices"])
     if not previous.issubset(acquired):
         raise ValueError("A completed round cannot remove acquired geometries")
+    per_point_uncertainty = _validated_committee_uncertainty(
+        committee_uncertainty_by_index, state["hf_grid"]["size"]
+    )
     record.update(
         {
             "status": "completed",
             "committee": deepcopy(dict(committee)),
             "uncertainty": deepcopy(dict(uncertainty)),
+            "committee_uncertainty_by_index": per_point_uncertainty,
             "selection": deepcopy(dict(selection)),
         }
     )
@@ -215,6 +220,37 @@ def _current_round(state: Mapping[str, Any]) -> dict[str, Any]:
     if not state.get("rounds"):
         raise ValueError("No active-learning round has been started")
     return state["rounds"][-1]
+
+
+def _validated_committee_uncertainty(
+    values: Iterable[Mapping[str, Any]], grid_size: int
+) -> list[dict[str, float | int]]:
+    """Validate and normalize per-point committee uncertainty for JSON output."""
+    result: list[dict[str, float | int]] = []
+    indices: set[int] = set()
+    for value in values:
+        if not isinstance(value, Mapping):
+            raise ValueError("Per-point committee uncertainty entries must be mappings")
+        index = value.get("index")
+        if isinstance(index, bool) or not isinstance(index, (int, np.integer)):
+            raise ValueError("Per-point committee uncertainty indices must be integers")
+        index = int(index)
+        if not 0 <= index < grid_size or index in indices:
+            raise ValueError("Per-point committee uncertainty indices must be unique grid indices")
+        entry: dict[str, float | int] = {"index": index}
+        for key in ("energy_std", "force_std", "score"):
+            number = value.get(key)
+            if isinstance(number, bool) or not isinstance(
+                number, (int, float, np.integer, np.floating)
+            ):
+                raise ValueError(f"Per-point committee {key} must be a finite number")
+            number = float(number)
+            if not np.isfinite(number) or number < 0.0:
+                raise ValueError(f"Per-point committee {key} must be non-negative and finite")
+            entry[key] = number
+        indices.add(index)
+        result.append(entry)
+    return result
 
 
 def _state_indices(state: Mapping[str, Any], indices: Iterable[int]) -> list[int]:
