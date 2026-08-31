@@ -1,40 +1,37 @@
 {
   "ignore": true,
-  "transfer_learning": false,
+  "mode": "both",
   "strategy": "naive",
-  "run": "both",
   "cross_validation": true,
   "k": 2,
-  "base_xyz": "../../data/A02_propene_grid_static_CASSCF.xyz",
-  "transfer_xyz": "../../data/A02_propene_grid_static_SA3-NEVPT2_22_molcas.xyz",
-  "base_test_xyz": [
+  "lf_xyz": "../../data/A02_propene_grid_static_CASSCF.xyz",
+  "hf_xyz": "../../data/A02_propene_grid_static_SA3-NEVPT2_22_molcas.xyz",
+  "lf_test_xyz": [
     "../../data/A02_propene_offgrid_128_sobol_2e2o.xyz"
   ],
-  "transfer_test_xyz": [
+  "hf_test_xyz": [
     "../../data/A02_propene_offgrid_SA3-NEVPT2_22_molcas.xyz"
   ],
-  "base_n_geometries": 3731,
-  "transfer_n_geometries": 3731,
+  "lf_n_geometries": 3731,
+  "hf_n_geometries": 3731,
   "seed": 42,
   "device": "cpu",
-  "validation_fraction": 0.1,
   "batch_size": 64,
   "r_max": 5.0,
-  "max_epochs": 1,
-  "base_max_epochs": 1,
-  "full_max_epochs": 1,
-  "base_learning_rate": 0.001,
-  "full_learning_rate": 0.001,
-  "base_E0s": {
+  "lf_max_epochs": 1,
+  "hf_max_epochs": 1,
+  "lf_learning_rate": 0.001,
+  "hf_learning_rate": 0.001,
+  "lf_E0s": {
     "C": -1032.083979117871,
     "H": -15.357929595328724
   },
-  "full_E0s": {
+  "hf_E0s": {
     "C": -1035.5115207879423,
     "H": -15.712048126191444
   },
   "preset": "default_ani",
-  "load_base": "ani500k",
+  "foundation_model": "ani500k",
   "optimiser_lr": 0.001,
   "optimiser_weight_decay": 5e-07,
   "max_grad_norm": 10.0,
@@ -45,6 +42,7 @@
   "stopping_patience": 2048,
   "restore_best": true,
   "verbose": true,
+  "generate_plots": true,
   "energy_key": "REF_energy",
   "forces_key": "REF_forces",
   "loss_kwargs": {

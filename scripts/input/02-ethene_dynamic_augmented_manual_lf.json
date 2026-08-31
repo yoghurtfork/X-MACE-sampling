@@ -1,30 +1,28 @@
 {
   "ignore": true,
-  "transfer_learning": false,
+  "mode": "lf",
   "strategy": "naive",
   "strategy_kwargs": {},
-  "run": "just_base",
   "cross_validation": true,
   "k": 5,
-  "base_xyz": "../../data/A01_ethene/dynamic/A01_ethene_dynamic_CASSCF_sanity_defaults_filtered_first_740_augmented.xyz",
-  "base_test_xyz": [
+  "lf_xyz": "../../data/A01_ethene/dynamic/A01_ethene_dynamic_CASSCF_sanity_defaults_filtered_first_740_augmented.xyz",
+  "lf_test_xyz": [
     "../../data/A01_ethene/dynamic/A01_ethene_dynamic_CASSCF_test_set.xyz",
     "../../data/A01_ethene/offgrid/A01_ethene_offgrid_CASSCF.xyz"
   ],
-  "base_n_geometries": 7400,
+  "lf_n_geometries": 7400,
   "seed": 42,
   "device": "cuda",
   "batch_size": 10,
   "r_max": 5.0,
-  "max_epochs": 100,
-  "base_max_epochs": 100,
-  "base_learning_rate": 0.001,
-  "base_E0s": {
+  "lf_max_epochs": 100,
+  "lf_learning_rate": 0.001,
+  "lf_E0s": {
     "C": -1032.083979117871,
     "H": -15.357929595328724
   },
   "preset": "default_ani",
-  "load_base": "ani500k",
+  "foundation_model": "ani500k",
   "optimiser_lr": 0.001,
   "optimiser_weight_decay": 5e-07,
   "max_grad_norm": 10.0,
@@ -35,6 +33,7 @@
   "stopping_patience": 2048,
   "restore_best": true,
   "verbose": false,
+  "generate_plots": false,
   "energy_key": "REF_energy",
   "forces_key": "REF_forces",
   "loss_kwargs": {
