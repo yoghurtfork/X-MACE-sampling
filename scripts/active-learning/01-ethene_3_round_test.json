@@ -1,0 +1,38 @@
+{
+  "lf_checkpoint": "../../outputs/base_models/base_model_ethene_FINAL_fold_3.pt",
+  "hf_xyz": "../../data/A01_ethene/static/A01_ethene_grid_static_NEVPT2_FINAL.xyz",
+  "hf_test_xyz": "../../data/A01_ethene/offgrid/A01_ethene_offgrid_NEVPT2.xyz",
+  "grid_shape": [41, 91],
+  "initial_acquired_count": 50,
+  "n_rounds": 3,
+  "k": 3,
+  "max_seeds_per_round": 4,
+  "uncertainty_threshold": 0.05,
+  "energy_uncertainty_weight": 1.0,
+  "force_uncertainty_weight": 1.0,
+  "seed": 42,
+  "device": "cuda",
+  "max_epochs": 100,
+  "final_max_epochs": 100,
+  "batch_size": 64,
+  "r_max": 5.0,
+  "transfer_lr": 0.0005,
+  "final_transfer_lr": 0.0005,
+  "strategy": "naive",
+  "hf_E0s": {
+    "C": -1035.5115207879423,
+    "H": -15.712048126191444
+  },
+  "early_stopping": true,
+  "restore_best": true,
+  "verbose": true,
+  "energy_key": "REF_energy",
+  "forces_key": "REF_forces",
+  "loss_kwargs": {
+    "energy_weight": 1.0,
+    "forces_weight": 1.0,
+    "dipoles_weight": 0.0,
+    "nacs_weight": 0.0,
+    "socs_weight": 0.0
+  }
+}

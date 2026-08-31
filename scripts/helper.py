@@ -943,6 +943,7 @@ def _train_k_fold_models(
     strategy: str = "naive",
     strategy_kwargs: dict[str, Any] | None = None,
     generate_plots: bool = True,
+    progress_label: str | None = None,
     on_fold_complete: Callable[[dict[str, Any]], None] | None = None,
     on_checkpoint: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
@@ -952,6 +953,10 @@ def _train_k_fold_models(
             f"'k' must be between 2 and the {model_prefix} dataset size "
             f"({len(all_atoms)})"
         )
+    if progress_label is not None and (
+        not isinstance(progress_label, str) or not progress_label
+    ):
+        raise ValueError("'progress_label' must be a non-empty string or None")
     builder = data_builder_class(
         cutoff=r_max,
         energy_key=energy_key,
@@ -977,6 +982,18 @@ def _train_k_fold_models(
     for fold_number, (train_indices, valid_indices) in enumerate(
         splitter.split(range(len(all_atoms))), start=1
     ):
+        fold_seed = seed + fold_number
+        # Reset immediately before creating the shuffled loader and training
+        # this fold, so each member of the committee is reproducible on its
+        # own while retaining the deterministic KFold partition above.
+        seed_everything(fold_seed)
+        if progress_label is not None:
+            print(
+                f"{progress_label} | starting fold {fold_number}/{k} "
+                f"(train={len(train_indices)}, validation={len(valid_indices)}, "
+                f"seed={fold_seed})",
+                flush=True,
+            )
         train_loader = builder.load(
             [all_atoms[index] for index in train_indices],
             batch_size=batch_size,
@@ -1018,6 +1035,7 @@ def _train_k_fold_models(
                     include_artifacts=generate_plots,
                     current_fold={
                         "key": model_key,
+                        "fold_seed": fold_seed,
                         "status": "interrupted",
                         "model_path": str(model_path),
                     },
@@ -1045,6 +1063,7 @@ def _train_k_fold_models(
                 include_artifacts=generate_plots,
                 current_fold={
                     "key": model_key,
+                    "fold_seed": fold_seed,
                     "status": "trained_pending_evaluation",
                     "model_path": str(model_path),
                     "history": history,
@@ -1057,6 +1076,7 @@ def _train_k_fold_models(
         for metrics in test_metrics.values():
             metrics["best_epoch"] = int(history["best_epoch"])
         fold_results[model_key] = {
+            "fold_seed": fold_seed,
             "history": history,
             "metrics": test_metrics["test_1"],
             "test_metrics": test_metrics,
@@ -1070,6 +1090,7 @@ def _train_k_fold_models(
                 include_artifacts=generate_plots,
                 current_fold={
                     "key": model_key,
+                    "fold_seed": fold_seed,
                     "status": "evaluated_pending_artifacts",
                     "model_path": str(model_path),
                 },
