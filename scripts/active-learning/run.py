@@ -438,7 +438,7 @@ def _train_final_production_model(
     for epoch in range(1, config.final_max_epochs + 1):
         learning_rate = optimiser.param_groups[0]["lr"]
         metrics = trainer._run_epoch(
-            model, train_loader, optimiser, loss_fn, training=True
+            model, train_loader, optimiser, loss_fn, training=True, test=True
         )
         history["epoch"].append(epoch)
         history["train_loss"].append(float(metrics["loss"]))
