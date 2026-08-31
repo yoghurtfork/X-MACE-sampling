@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import multiprocessing as mp
 import os
 import sys
@@ -14,6 +13,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from scripts.config import load_config
+from scripts.state import reserve_run_dir
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_INPUT_DIR = SCRIPT_DIR / "input"
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "output"
@@ -23,62 +25,20 @@ class Job(NamedTuple):
     """A job whose output directory has already been reserved."""
 
     config_path: Path
-    transfer_learning: bool
     run_dir: Path
-    run: str = "both"
 
 
-def _read_job_options(config_path: Path) -> tuple[bool, bool, str, str]:
-    config = json.loads(config_path.read_text(encoding="utf-8"))
-    if not isinstance(config, dict):
-        raise ValueError("The top-level JSON value must be an object")
-    ignore = config.get("ignore", False)
-    if not isinstance(ignore, bool):
-        raise ValueError("'ignore' must be a JSON boolean")
-    transfer_learning = config.get("transfer_learning", True)
-    if not isinstance(transfer_learning, bool):
-        raise ValueError("'transfer_learning' must be a JSON boolean")
-    device = config.get("device", "cpu")
-    if device not in {"cpu", "cuda"}:
-        raise ValueError("'device' must be either 'cpu' or 'cuda'")
-    run = config.get("run", "both")
-    if run not in {"both", "just_base", "just_full"}:
-        raise ValueError("'run' must be 'both', 'just_base', or 'just_full'")
-    return ignore, transfer_learning, device, run
-
-
-def _reserve_run_dir(output_dir: Path) -> Path:
-    """Reserve a unique output directory in the parent scheduler process."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    indices = []
-    for path in output_dir.glob("run_*"):
-        if path.is_dir():
-            try:
-                indices.append(int(path.name.removeprefix("run_")))
-            except ValueError:
-                pass
-    run_dir = output_dir / f"run_{max(indices, default=-1) + 1}"
-    run_dir.mkdir()
-    return run_dir
+def _read_job_options(config_path: Path) -> tuple[bool, str]:
+    """Validate a job once and return only its scheduling settings."""
+    config, _warnings = load_config(config_path)
+    return config["ignore"], config["device"]
 
 
 def _run_job(job: Job) -> Path:
-    """Import the selected trainer only after a worker selects its device."""
-    if job.transfer_learning:
-        from scripts import tester
+    """Start the single trainer after a worker selects its CUDA device."""
+    from scripts import train
 
-        return tester.run_config(job.config_path, job.run_dir.parent, job.run_dir)
-
-    if job.run in {"just_base", "just_full"}:
-        from scripts import single_trainer
-
-        return single_trainer.run_config(
-            job.config_path, job.run_dir.parent, job.run_dir
-        )
-
-    from scripts import base_full_trainer
-
-    return base_full_trainer.run_config(job.config_path, job.run_dir.parent, job.run_dir)
+    return train.run_config(job.config_path, job.run_dir.parent, job.run_dir)
 
 
 def _gpu_worker(
@@ -186,22 +146,17 @@ def main() -> int:
         return 1
 
     cpu_jobs: list[Job] = []
-    cuda_specs: list[tuple[Path, bool, str]] = []
+    cuda_specs: list[Path] = []
     failed = 0
     for config_path in config_paths:
         try:
-            ignore, transfer_learning, device, run = _read_job_options(config_path)
+            ignore, device = _read_job_options(config_path)
             if ignore:
                 print(f"Skipping {config_path.name} ('ignore' is true)")
             elif device == "cuda":
-                cuda_specs.append((config_path, transfer_learning, run))
+                cuda_specs.append(config_path)
             else:
-                cpu_jobs.append(
-                    Job(
-                        config_path, transfer_learning,
-                        _reserve_run_dir(output_dir), run,
-                    )
-                )
+                cpu_jobs.append(Job(config_path, reserve_run_dir(output_dir)))
         except Exception as exc:
             failed += 1
             print(f"Job failed for {config_path}: {exc}", file=sys.stderr)
@@ -219,13 +174,13 @@ def main() -> int:
         try:
             gpu_indices = _parse_gpu_indices(args.gpus, device_count)
         except ValueError as exc:
-            for config_path, _, _ in cuda_specs:
+            for config_path in cuda_specs:
                 print(f"CUDA: job failed for {config_path}: {exc}", file=sys.stderr)
             failed += len(cuda_specs)
         else:
             cuda_jobs = [
-                Job(config_path, transfer_learning, _reserve_run_dir(output_dir), run)
-                for config_path, transfer_learning, run in cuda_specs
+                Job(config_path, reserve_run_dir(output_dir))
+                for config_path in cuda_specs
             ]
             print(
                 f"Scheduling {len(cuda_jobs)} CUDA job(s) across GPU(s) {gpu_indices} "
