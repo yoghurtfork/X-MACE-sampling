@@ -19,6 +19,12 @@ class ConfigError(ValueError):
 
 _MODES = {"lf", "hf", "transfer", "both"}
 _STRATEGIES = {"naive", "freeze"}
+DEFAULT_SEED = 42
+DEFAULT_DEVICE = "cuda"
+DEFAULT_MAX_EPOCHS = 100
+DEFAULT_R_MAX = 5.0
+DEFAULT_BATCH_SIZE = 64
+DEFAULT_TRANSFER_LEARNING_RATE = 5.0e-4
 _LOSS_DEFAULTS = {
     "energy_weight": 1.0,
     "forces_weight": 1.0,
@@ -28,18 +34,18 @@ _LOSS_DEFAULTS = {
 }
 _DEFAULTS: dict[str, Any] = {
     "ignore": False,
-    "seed": 42,
-    "device": "cuda",
+    "seed": DEFAULT_SEED,
+    "device": DEFAULT_DEVICE,
     "cross_validation": False,
     "validation_fraction": 0.1,
-    "batch_size": 64,
-    "r_max": 5.0,
-    "lf_max_epochs": 100,
-    "hf_max_epochs": 100,
-    "transfer_max_epochs": 100,
+    "batch_size": DEFAULT_BATCH_SIZE,
+    "r_max": DEFAULT_R_MAX,
+    "lf_max_epochs": DEFAULT_MAX_EPOCHS,
+    "hf_max_epochs": DEFAULT_MAX_EPOCHS,
+    "transfer_max_epochs": DEFAULT_MAX_EPOCHS,
     "lf_learning_rate": 1.0e-3,
     "hf_learning_rate": 1.0e-3,
-    "transfer_learning_rate": 5.0e-4,
+    "transfer_learning_rate": DEFAULT_TRANSFER_LEARNING_RATE,
     "foundation_model": "ani500k",
     "strategy": "naive",
     "strategy_kwargs": {},
@@ -82,6 +88,114 @@ _ALLOWED_FIELDS = set(_DEFAULTS) | _PATH_FIELDS | _TEST_PATH_FIELDS | _OPTIONAL_
 } | set(_TRAINER_NUMBER_FIELDS)
 
 
+def resolve_path(value: Any, key: str, config_path: Path) -> Path:
+    """Validate and resolve a configuration path without requiring it to exist."""
+    if not isinstance(value, str) or not value:
+        raise ConfigError(f"'{key}' must be a non-empty path string")
+    candidate = Path(value).expanduser()
+    return (
+        (Path(config_path).resolve().parent / candidate).resolve()
+        if not candidate.is_absolute()
+        else candidate.resolve()
+    )
+
+
+def parse_e0s(value: Any, key: str) -> dict[str, float] | None:
+    """Validate an optional element-to-E0 mapping and normalize its values."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ConfigError(f"'{key}' must be a JSON object or null")
+    result: dict[str, float] = {}
+    for element, energy in value.items():
+        if not isinstance(element, str) or not element:
+            raise ConfigError(f"'{key}' element names must be non-empty strings")
+        result[element] = _number(energy, f"'{key}.{element}'")
+    return result
+
+
+def parse_strategy(value: Any) -> str:
+    """Validate a supported MACE training strategy."""
+    if not isinstance(value, str):
+        raise ConfigError("'strategy' must be a JSON string")
+    if value not in _STRATEGIES:
+        raise ConfigError("'strategy' must be either 'naive' or 'freeze'")
+    return value
+
+
+def parse_strategy_kwargs(strategy: str, value: Any) -> dict[str, Any]:
+    """Validate strategy-specific configuration while preserving freeze defaults."""
+    if strategy not in _STRATEGIES:
+        raise ConfigError("'strategy' must be either 'naive' or 'freeze'")
+    if not isinstance(value, dict):
+        raise ConfigError("'strategy_kwargs' must be a JSON object")
+    if strategy == "naive":
+        if value:
+            raise ConfigError("'strategy_kwargs' is not supported for 'naive'")
+        return {}
+    invalid = sorted(set(value).difference({"frozen_layers"}))
+    if invalid:
+        raise ConfigError("'strategy_kwargs' for 'freeze' may contain only 'frozen_layers'")
+    layers = value.get("frozen_layers", ["node_embedding", "interactions"])
+    if not isinstance(layers, list) or not all(
+        isinstance(layer, str) and layer for layer in layers
+    ):
+        raise ConfigError(
+            "'strategy_kwargs.frozen_layers' must be an array of non-empty strings"
+        )
+    return {"frozen_layers": list(layers)}
+
+
+def parse_checkpoint_epochs(value: Any) -> int | None:
+    """Validate an optional positive checkpoint interval."""
+    return None if value is None else _positive_integer(value, "'checkpoint_epochs'")
+
+
+def validate_device_name(value: Any) -> str:
+    """Validate a device name without importing torch or probing CUDA."""
+    if value not in {"cpu", "cuda"}:
+        raise ConfigError("'device' must be either 'cpu' or 'cuda'")
+    return value
+
+
+def parse_trainer_options(config: dict[str, Any]) -> dict[str, Any]:
+    """Extract validated MACE trainer options from any compatible config object."""
+    options: dict[str, Any] = {}
+    for key, default in (
+        ("early_stopping", True),
+        ("restore_best", True),
+        ("verbose", True),
+    ):
+        value = config.get(key, default)
+        _require_bool(value, repr(key))
+        options[key] = value
+    for key, (minimum, strict) in _TRAINER_NUMBER_FIELDS.items():
+        if key in config:
+            options[key] = _number(config[key], repr(key), minimum, strict)
+    if "ema_decay" in config:
+        value = config["ema_decay"]
+        if value is None:
+            options["ema_decay"] = None
+        else:
+            parsed = _number(value, "'ema_decay'", 0.0, True)
+            if parsed >= 1.0:
+                raise ConfigError("'ema_decay' must be less than 1")
+            options["ema_decay"] = parsed
+    if "scheduler_patience" in config:
+        options["scheduler_patience"] = _integer(
+            config["scheduler_patience"], "'scheduler_patience'", minimum=0
+        )
+    patience_key = (
+        "stopping_patience" if "stopping_patience" in config
+        else "patience" if "patience" in config else None
+    )
+    if patience_key is not None:
+        options["stopping_patience"] = _positive_integer(
+            config[patience_key], repr(patience_key)
+        )
+    return options
+
+
 def load_config(config_path: Path) -> tuple[dict[str, Any], list[str]]:
     """Load one strict training configuration and return it with warnings.
 
@@ -122,8 +236,7 @@ def load_config(config_path: Path) -> tuple[dict[str, Any], list[str]]:
 def _validate_common(config: dict[str, Any]) -> None:
     _require_bool(config["ignore"], "'ignore'")
     config["seed"] = _integer(config["seed"], "'seed'")
-    if config["device"] not in {"cpu", "cuda"}:
-        raise ConfigError("'device' must be either 'cpu' or 'cuda'")
+    config["device"] = validate_device_name(config["device"])
     _require_bool(config["cross_validation"], "'cross_validation'")
     config["batch_size"] = _positive_integer(config["batch_size"], "'batch_size'")
     config["r_max"] = _positive_number(config["r_max"], "'r_max'")
@@ -146,44 +259,25 @@ def _validate_common(config: dict[str, Any]) -> None:
     foundation = config["foundation_model"]
     if foundation is not None and (not isinstance(foundation, str) or not foundation):
         raise ConfigError("'foundation_model' must be a non-empty string or null")
-    config["strategy"] = _required_string(config, "strategy")
-    if config["strategy"] not in _STRATEGIES:
-        raise ConfigError("'strategy' must be either 'naive' or 'freeze'")
-    config["strategy_kwargs"] = _strategy_kwargs(
+    config["strategy"] = parse_strategy(config["strategy"])
+    config["strategy_kwargs"] = parse_strategy_kwargs(
         config["strategy"], config["strategy_kwargs"]
     )
-    config["checkpoint_epochs"] = _optional_positive_integer(
-        config["checkpoint_epochs"], "'checkpoint_epochs'"
-    )
+    config["checkpoint_epochs"] = parse_checkpoint_epochs(config["checkpoint_epochs"])
     config["preset"] = _required_string(config, "preset")
     config["energy_key"] = _required_string(config, "energy_key")
     config["forces_key"] = _required_string(config, "forces_key")
-    for key in ("early_stopping", "restore_best", "verbose", "generate_plots", "pca"):
+    trainer_options = parse_trainer_options(config)
+    config.update(trainer_options)
+    for key in ("generate_plots", "pca"):
         _require_bool(config[key], repr(key))
     config["loss_kwargs"] = _loss_kwargs(config.get("loss_kwargs", {}))
-    for key, (minimum, strict) in _TRAINER_NUMBER_FIELDS.items():
-        if key in config:
-            config[key] = _number(config[key], repr(key), minimum, strict)
-    if "ema_decay" in config:
-        value = config["ema_decay"]
-        if value is not None:
-            config["ema_decay"] = _number(value, "'ema_decay'", 0.0, True)
-            if config["ema_decay"] >= 1.0:
-                raise ConfigError("'ema_decay' must be less than 1")
-    if "scheduler_patience" in config:
-        config["scheduler_patience"] = _integer(
-            config["scheduler_patience"], "'scheduler_patience'", minimum=0
-        )
-    if "stopping_patience" in config:
-        config["stopping_patience"] = _positive_integer(
-            config["stopping_patience"], "'stopping_patience'"
-        )
 
 
 def _normalize_paths(config: dict[str, Any], config_path: Path) -> None:
     for key in _PATH_FIELDS:
         if key in config:
-            config[key] = _path(config[key], key, config_path)
+            config[key] = resolve_path(config[key], key, config_path)
     for key in _TEST_PATH_FIELDS:
         if key in config:
             config[key] = _test_paths(config[key], key, config_path)
@@ -195,7 +289,7 @@ def _normalize_optional_fields(config: dict[str, Any]) -> None:
             config[key] = _positive_integer(config[key], repr(key))
     for key in _OPTIONAL_E0_FIELDS:
         if key in config:
-            config[key] = _e0s(config[key], key)
+            config[key] = parse_e0s(config[key], key)
     for key in ("descriptor_kwargs", "selector_kwargs"):
         if not isinstance(config[key], dict):
             raise ConfigError(f"'{key}' must be a JSON object")
@@ -278,7 +372,7 @@ def _test_paths(value: Any, key: str, config_path: Path) -> list[Path]:
     values = [value] if isinstance(value, str) else value
     if not isinstance(values, list) or not values:
         raise ConfigError(f"'{key}' must be a path string or a non-empty array of path strings")
-    return [_path(item, key, config_path) for item in values]
+    return [resolve_path(item, key, config_path) for item in values]
 
 
 def _loss_kwargs(value: Any) -> dict[str, float]:
