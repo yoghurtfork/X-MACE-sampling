@@ -8,7 +8,9 @@ from typing import Any, Callable
 
 import torch
 
-from scripts.helper import _load_model, _train_k_fold_models
+from scripts.model import load_model
+
+from train import train_k_fold_models
 
 
 @dataclass(frozen=True)
@@ -52,7 +54,7 @@ def train_round_committee(
 ) -> CommitteeTraining:
     """Train one committee round from the unchanged supplied LF checkpoint.
 
-    The checkpoint is loaded anew for every call. `_train_k_fold_models` then
+    The checkpoint is loaded anew for every call. ``train_k_fold_models`` then
     deep-copies that pristine model for its individual folds, avoiding any
     dependency on a previous active-learning round's checkpoints.
     """
@@ -61,8 +63,8 @@ def train_round_committee(
     if not evaluation_atoms:
         raise ValueError("At least one evaluation geometry is required")
     model_prefix = f"committee_round_{round_number:03d}"
-    initial_model = _load_model(lf_checkpoint, device)
-    training = _train_k_fold_models(
+    initial_model = load_model(lf_checkpoint, device)
+    training = train_k_fold_models(
         initial_model=initial_model,
         all_atoms=acquired_atoms,
         test_atoms=evaluation_atoms,
