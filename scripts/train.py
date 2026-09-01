@@ -142,7 +142,7 @@ def _run_transfer_stage(config: dict[str, Any], device: Any, run_state: state.Ru
         )
     lf_pool = _atoms_at(lf_atoms, pool_indices)
     hf_pool = _atoms_at(hf_atoms, pool_indices)
-    initial_model = model.load_transfer_model(config, device)
+    initial_model = model.load_model(config["pretrained_model_path"], device)
     descriptor_matrix = _selection_descriptors(initial_model, lf_pool, config, device)
     selected_local_indices = _select_indices(descriptor_matrix, config)
     _, selected_hf_atoms, selected_local_indices = data.selected_transfer_atoms(

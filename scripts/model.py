@@ -37,13 +37,13 @@ def build_scratch_model(metadata: Any, config: dict[str, Any], device: Any) -> A
     ).to(device)
 
 
-def load_transfer_model(config: dict[str, Any], device: Any) -> Any:
-    """Load the sole starting model permitted by transfer mode."""
+def load_model(model_path: Path, device: Any) -> Any:
+    """Load one persisted model onto the requested device."""
     import torch
 
-    path = Path(config["pretrained_model_path"])
+    path = Path(model_path).expanduser().resolve()
     if not path.is_file():
-        raise FileNotFoundError(f"Pretrained model file does not exist: {path}")
+        raise FileNotFoundError(f"Model file does not exist: {path}")
     return torch.load(path, map_location=device, weights_only=False).to(device)
 
 
