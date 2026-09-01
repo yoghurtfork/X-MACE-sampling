@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import random
 import sys
 import time
 from pathlib import Path
@@ -35,18 +37,10 @@ from state import (
     start_round,
 )
 from uncertainty import committee_uncertainty
-from scripts.helper import (
-    _apply_training_strategy,
-    _e0s_from_metadata,
-    _evaluate,
-    _import_project_modules,
-    _load_model,
-    _next_run_dir,
-    _save_model,
-    _trainer_options_for_learning_rate,
-    _write_json,
-    seed_everything,
-)
+from scripts.data import read_atoms, resolved_e0s
+from scripts.evaluation import evaluate_model
+from scripts.model import apply_training_strategy, load_model, validate_device
+from scripts.state import reserve_run_dir, save_model
 
 
 def run_config(
@@ -82,7 +76,7 @@ def run_config(
         state = store.resume(identity)
     else:
         if run_dir is None:
-            run_dir = _next_run_dir(output_dir)
+            run_dir = reserve_run_dir(output_dir)
         else:
             run_dir = run_dir.resolve()
             if not run_dir.is_dir():
@@ -110,18 +104,12 @@ def run_config(
         )
         store.save(state)
 
-    (
-        modules,
-        AtomDataLoaderBuilder,
-        Tester,
-        _extract_latent_space,
-        _NaiveStrategy,
-        Trainer,
-        _initialise_autoencoder,
-        _descriptors,
-        _selectors,
-    ) = _import_project_modules()
-    device = torch.device(config.device)
+    from mace import modules
+    from mace.data.atom_data_loader import AtomDataLoaderBuilder
+    from mace.testing import Tester
+    from mace.training import Trainer
+
+    device = validate_device(config.device)
     loss_fn = modules.InvariantsWeightedEnergyForcesNacsDipoleLoss(
         **config.loss_kwargs
     ).to(device)
@@ -297,7 +285,7 @@ def _run_one_round(
         grid.prediction_atoms(unacquired), batch_size=config.batch_size, shuffle=False
     )
     models = [
-        _load_model(Path(path), device)
+        load_model(Path(path), device)
         for path in committee.model_paths.values()
     ]
     predictions = predict_committee(models, prediction_loader, device=device)
@@ -427,7 +415,7 @@ def _train_final_production_model(
         f"(acquired={len(acquired_atoms)}, epochs={config.final_max_epochs})",
         flush=True,
     )
-    seed_everything(config.seed)
+    _seed_everything(config.seed)
     builder = data_builder_class(
         cutoff=config.r_max,
         energy_key=config.energy_key,
@@ -437,18 +425,19 @@ def _train_final_production_model(
     train_loader = builder.load(
         acquired_atoms, batch_size=config.batch_size, shuffle=True
     )
-    model = _apply_training_strategy(
-        _load_model(config.lf_checkpoint, device),
-        config.strategy,
-        config.strategy_kwargs,
+    model = apply_training_strategy(
+        load_model(config.lf_checkpoint, device),
+        {"strategy": config.strategy, "strategy_kwargs": config.strategy_kwargs},
     ).to(device)
     trainer = trainer_class(
         max_epochs=config.final_max_epochs,
         device=device,
-        **_trainer_options_for_learning_rate(
-            {**config.trainer_options, "early_stopping": False, "restore_best": False},
-            config.final_learning_rate,
-        ),
+        **{
+            **config.trainer_options,
+            "early_stopping": False,
+            "restore_best": False,
+            "optimiser_lr": config.final_learning_rate,
+        },
     )
     from mace.training.trainer import build_optimiser
 
@@ -483,12 +472,12 @@ def _train_final_production_model(
             verbose=config.trainer_options["verbose"],
         )
     history["stopped_epoch"] = config.final_max_epochs
-    model_path = _save_model(model, run_dir / "final_production_model.pt")
+    model_path = save_model(model, run_dir / "final_production_model.pt")
     result: dict[str, Any] = {
         "model_path": str(model_path),
         "history": history,
         "training_seconds": time.time() - started_at,
-        "E0s": _e0s_from_metadata(builder.get_metadata()),
+        "E0s": resolved_e0s(builder),
         "validation": "disabled",
         "early_stopping": "disabled",
         "scheduler": "disabled",
@@ -498,7 +487,7 @@ def _train_final_production_model(
         test_loader = builder.load(
             test_atoms, batch_size=config.batch_size, shuffle=False
         )
-        result["hf_test_metrics"] = _evaluate(
+        result["hf_test_metrics"] = evaluate_model(
             model, test_loader, tester_class(device=device)
         )
     complete_final_production_model(state, result=result)
@@ -545,9 +534,16 @@ def _read_raw_config(config_path: Path) -> dict[str, Any]:
 def _read_test_atoms(path: Path | None) -> list[Any] | None:
     if path is None:
         return None
-    from scripts.helper import _read_atoms
+    return read_atoms(path)
 
-    return _read_atoms(path)
+
+def _seed_everything(seed: int) -> None:
+    """Seed active-learning training without expanding the top-level API."""
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 
 def main() -> int:
