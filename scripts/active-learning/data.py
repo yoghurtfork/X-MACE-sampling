@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from scripts.helper import _read_atoms
+from scripts.data import read_atoms
 from sampling_methods import descriptors
 
 
@@ -33,7 +33,7 @@ class HFGrid:
         forces_key: str,
     ) -> "HFGrid":
         """Load a complete labeled HF grid and validate its topology."""
-        atoms = _read_atoms(path)
+        atoms = read_atoms(path)
         expected_count = int(np.prod(grid_shape))
         if len(atoms) != expected_count:
             raise ValueError(
