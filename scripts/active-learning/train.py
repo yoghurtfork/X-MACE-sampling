@@ -94,6 +94,8 @@ def train_k_fold_models(
         )
         model_key = f"model_{fold_number}"
         model_path = (Path(run_dir) / f"{model_prefix}_fold_{fold_number}.pt").resolve()
+        checkpoint_dir = (Path(run_dir) / f"{model_prefix}_fold_{fold_number}").resolve()
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
         fold_model = deepcopy(initial_model).to(device)
         trainer = trainer_class(
             max_epochs=max_epochs,
@@ -113,12 +115,18 @@ def train_k_fold_models(
                 fold_model,
                 {"strategy": strategy, "strategy_kwargs": effective_strategy_kwargs},
             ).to(device)
+            checkpoint_kwargs = (
+                {"checkpoint_models_dir": checkpoint_dir}
+                if isinstance(checkpoint_epochs, int)
+                else {}
+            )
             fold_model, history = trainer.train_model(
                 fold_model,
                 train_loader,
                 valid_loader,
                 loss_fn,
                 checkpoint_epoch=checkpoint_epochs,
+                **checkpoint_kwargs,
             )
         except KeyboardInterrupt:
             saved_path = state.save_model(fold_model, model_path)
@@ -136,11 +144,10 @@ def train_k_fold_models(
             raise
 
         saved_path = state.save_model(fold_model, model_path)
-        checkpoint_metrics = _save_and_evaluate_checkpoints(
-            fold_model, history, checkpoint_epochs, test_loaders, tester, device, saved_path
+        checkpoint_metrics = evaluation.evaluate_checkpoint_models(
+            fold_model, history, checkpoint_epochs, test_loaders, tester, device
         )
-        safe_history = dict(history)
-        safe_history["checkpoint_models"] = checkpoint_metrics
+        history["checkpoint_models"] = checkpoint_metrics
         if on_checkpoint is not None:
             on_checkpoint(_snapshot(
                 fold_results, artifacts,
@@ -150,15 +157,15 @@ def train_k_fold_models(
                 current_fold={
                     "key": model_key, "fold_seed": fold_seed,
                     "status": "trained_pending_evaluation", "model_path": str(saved_path),
-                    "history": safe_history,
+                    "history": history,
                 },
             ))
         test_metrics = evaluation.evaluate_test_sets(fold_model, test_loaders, tester)
-        best_epoch = int(safe_history["best_epoch"])
+        best_epoch = int(history["best_epoch"])
         for metrics in test_metrics.values():
             metrics["best_epoch"] = best_epoch
         fold_results[model_key] = {
-            "fold_seed": fold_seed, "history": safe_history,
+            "fold_seed": fold_seed, "history": history,
             "metrics": test_metrics["test_1"], "test_metrics": test_metrics,
             "model_path": str(saved_path),
         }
@@ -175,12 +182,12 @@ def train_k_fold_models(
         if generate_plots:
             artifacts[model_key] = {
                 "loss_plot": Path(state.save_loss_plot(
-                    run_dir, safe_history,
+                    run_dir, history,
                     title=f"{model_prefix.replace('_', ' ').title()} fold {fold_number}",
                     filename=f"{model_prefix}_fold_{fold_number}_loss.png",
                 )).name,
                 "validation_mae_plot": Path(state.save_epoch_mae_plot(
-                    run_dir, safe_history,
+                    run_dir, history,
                     title=(f"{model_prefix.replace('_', ' ').title()} fold {fold_number} "
                            "validation MAE"),
                     filename=f"{model_prefix}_fold_{fold_number}_validation_mae.png",
@@ -197,29 +204,6 @@ def train_k_fold_models(
         fold_results, artifacts, model_paths, total_folds=k,
         started_at=started_at, include_artifacts=generate_plots,
     ) | {"E0s": resolved_e0s}
-
-
-def _save_and_evaluate_checkpoints(
-    trained_model: Any,
-    history: dict[str, Any],
-    checkpoint_epochs: int | None,
-    test_loaders: dict[str, Any],
-    tester: Any,
-    device: torch.device,
-    model_path: Path,
-) -> list[dict[str, Any]]:
-    checkpoints = evaluation.evaluate_checkpoint_models(
-        trained_model, history, checkpoint_epochs, test_loaders, tester, device
-    )
-    results: list[dict[str, Any]] = []
-    for checkpoint in checkpoints:
-        checkpoint_model = checkpoint.pop("model")
-        checkpoint_path = model_path.with_name(
-            f"{model_path.stem}_checkpoint_epoch_{checkpoint['epoch']}{model_path.suffix}"
-        )
-        checkpoint["model_path"] = str(state.save_model(checkpoint_model, checkpoint_path))
-        results.append(checkpoint)
-    return results
 
 
 def _snapshot(
