@@ -219,9 +219,15 @@ def _train_once(
     test_loaders = data.make_test_loaders(builder, test_sets, config["batch_size"])
     trained_model = model.apply_training_strategy(initial_model, config).to(device)
     started = time.monotonic()
+    checkpoint_kwargs = (
+        {"checkpoint_models_dir": run_state.run_dir}
+        if isinstance(config["checkpoint_epochs"], int)
+        else {}
+    )
     trained_model, history = model.build_trainer(config, stage_name, device).train_model(
         trained_model, train_loader, valid_loader, model.build_loss(config, device),
         checkpoint_epoch=config["checkpoint_epochs"],
+        **checkpoint_kwargs,
     )
     model_path = state.save_model(trained_model, run_state.run_dir / model_filename)
     from mace.testing import Tester
@@ -234,27 +240,19 @@ def _train_once(
     checkpoint_entries = evaluation.evaluate_checkpoint_models(
         trained_model, history, config["checkpoint_epochs"], test_loaders, tester, device
     )
-    checkpoints = []
-    for checkpoint in checkpoint_entries:
-        checkpoint_model = checkpoint.pop("model")
-        checkpoint_path = model_path.with_name(
-            f"{model_path.stem}_checkpoint_epoch_{checkpoint['epoch']}{model_path.suffix}"
-        )
-        checkpoint["model_path"] = str(state.save_model(checkpoint_model, checkpoint_path))
-        checkpoints.append(checkpoint)
-    safe_history = dict(history)
-    safe_history["checkpoint_models"] = checkpoints
+    history["checkpoint_models"] = checkpoint_entries
     artifacts: dict[str, str] = {}
     if config["generate_plots"]:
         stem = model_path.stem
         artifacts = {
-            "loss_plot": state.save_loss_plot(run_state.run_dir, safe_history, title=stem.replace("_", " ").title(), filename=f"{stem}_loss.png"),
-            "validation_mae_plot": state.save_epoch_mae_plot(run_state.run_dir, safe_history, title=f"{stem.replace('_', ' ').title()} validation MAE", filename=f"{stem}_validation_mae.png"),
+            "loss_plot": state.save_loss_plot(run_state.run_dir, history, title=stem.replace("_", " ").title(), filename=f"{stem}_loss.png"),
+            "validation_mae_plot": state.save_epoch_mae_plot(run_state.run_dir, history, title=f"{stem.replace('_', ' ').title()} validation MAE", filename=f"{stem}_validation_mae.png"),
         }
     return {
-        "model_path": str(model_path), "checkpoint_paths": [entry["model_path"] for entry in checkpoints],
+        "model_path": str(model_path),
+        "checkpoint_paths": [entry["model_path"] for entry in checkpoint_entries],
         "test_metrics": test_metrics, "metrics": test_metrics["test_1"], "best_epoch": best_epoch,
-        "training_seconds": time.monotonic() - started, "history": safe_history,
+        "training_seconds": time.monotonic() - started, "history": history,
         "artifacts": artifacts,
     }
 

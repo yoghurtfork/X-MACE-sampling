@@ -6,6 +6,7 @@ from copy import deepcopy
 from typing import Any
 
 import numpy as np
+import torch
 
 
 def evaluate_model(model: Any, loader: Any, tester: Any) -> dict[str, Any]:
@@ -42,27 +43,27 @@ def evaluate_checkpoint_models(
     tester: Any,
     device: Any,
 ) -> list[dict[str, Any]]:
-    """Evaluate trainer checkpoint states without writing models or files.
-
-    Returned entries retain their in-memory model under ``model`` so the
-    orchestration layer can persist it through ``state.py`` and then remove it
-    before placing the remaining JSON-safe information in the result.
-    """
-    checkpoint_states = history.get("checkpoint_models", [])
+    """Load and evaluate every checkpoint recorded by the trainer."""
+    checkpoint_entries = history.get("checkpoint_models", [])
     if checkpoint_epochs is None:
-        if checkpoint_states:
+        if checkpoint_entries:
             raise ValueError("Trainer returned checkpoint models without checkpoint_epochs")
         return []
     results: list[dict[str, Any]] = []
-    for number, checkpoint_state in enumerate(checkpoint_states, start=1):
+    for checkpoint in checkpoint_entries:
+        epoch = int(checkpoint["epoch"])
+        checkpoint_path = str(checkpoint["path"])
         checkpoint_model = deepcopy(model).to(device)
+        checkpoint_state = torch.load(
+            checkpoint_path, map_location=device, weights_only=True
+        )
         checkpoint_model.load_state_dict(checkpoint_state)
         metrics_by_set = evaluate_test_sets(checkpoint_model, test_loaders, tester)
         primary = metrics_by_set["test_1"]
         results.append(
             {
-                "epoch": number * checkpoint_epochs,
-                "model": checkpoint_model,
+                "epoch": epoch,
+                "model_path": checkpoint_path,
                 "test_energy_mae": primary["energy_mae_ev"],
                 "test_force_mae": primary["force_mae_ev_per_ang"],
                 "test_metrics": metrics_by_set,
