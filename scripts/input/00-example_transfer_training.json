@@ -1,21 +1,17 @@
 {
   "ignore": true,
-  "transfer_learning": true,
+  "mode": "transfer",
   "strategy": "naive",
   "cross_validation": true,
   "k": 5,
-  "base_xyz": "../../data/A02_propene_grid_static_CASSCF.xyz",
-  "transfer_xyz": "../../data/A02_propene_grid_static_SA3-NEVPT2_22_molcas.xyz",
-  "base_test_xyz": [
-    "../../data/A02_propene_offgrid_128_sobol_2e2o.xyz"
-  ],
-  "transfer_test_xyz": [
+  "lf_xyz": "../../data/A02_propene_grid_static_CASSCF.xyz",
+  "hf_xyz": "../../data/A02_propene_grid_static_SA3-NEVPT2_22_molcas.xyz",
+  "hf_test_xyz": [
     "../../data/A02_propene_offgrid_SA3-NEVPT2_22_molcas.xyz"
   ],
-  "base_model_path": "../../outputs/base_models/base_propene_all_3731_geom_CASSCF_172_epoch_ani500k_cuda_run5bestfold.pt",
-  "full_model_path": "../../outputs/full_models/full_model_all_3731_geom_NEVPT2_119_epoch_ani500k_cuda_run5bestfold.pt",
-  "base_n_geometries": 3731,
-  "transfer_n_geometries": 3731,
+  "pretrained_model_path": "../../outputs/lf_models/lf_propene_all_3731_geom_CASSCF_172_epoch_ani500k_cuda_run5bestfold.pt",
+  "lf_n_geometries": 3731,
+  "hf_n_geometries": 3731,
   "descriptor": "energies",
   "descriptor_kwargs": {},
   "pca": false,
@@ -24,16 +20,15 @@
   "n_samples": 100,
   "seed": 42,
   "device": "cuda",
-  "validation_fraction": 0.1,
   "batch_size": 64,
   "r_max": 5.0,
-  "max_epochs": 1000,
-  "transfer_lr": 0.0005,
-  "base_E0s": {
+  "transfer_max_epochs": 1000,
+  "transfer_learning_rate": 0.0005,
+  "lf_E0s": {
     "C": -1032.083979117871,
     "H": -15.357929595328724
   },
-  "full_E0s": {
+  "hf_E0s": {
     "C": -1035.5115207879423,
     "H": -15.712048126191444
   },
@@ -47,6 +42,7 @@
   "stopping_patience": 2048,
   "restore_best": true,
   "verbose": true,
+  "generate_plots": true,
   "energy_key": "REF_energy",
   "forces_key": "REF_forces",
   "loss_kwargs": {

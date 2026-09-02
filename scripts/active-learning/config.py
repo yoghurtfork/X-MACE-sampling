@@ -7,19 +7,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from scripts.helper import (
-    BATCH_SIZE,
-    DEVICE,
-    MAX_EPOCHS,
-    R_MAX,
-    SEED,
-    TRANSFER_LR,
-    _e0s_from_config,
-    _path,
-    _strategy_from_config,
-    _strategy_kwargs_from_config,
-    _trainer_options_from_config,
-    _validate_device,
+from scripts.config import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_MAX_EPOCHS,
+    DEFAULT_R_MAX,
+    DEFAULT_SEED,
+    DEFAULT_TRANSFER_LEARNING_RATE,
+    parse_checkpoint_epochs,
+    parse_e0s,
+    parse_strategy,
+    parse_strategy_kwargs,
+    parse_trainer_options,
+    resolve_path,
+    validate_device_name,
 )
 
 
@@ -29,6 +29,20 @@ _LOSS_DEFAULTS = {
     "dipoles_weight": 0.0,
     "nacs_weight": 0.0,
     "socs_weight": 0.0,
+}
+_ACTIVE_DEFAULT_DEVICE = "cpu"
+_ALLOWED_FIELDS = {
+    "lf_checkpoint", "hf_xyz", "hf_test_xyz", "grid_shape",
+    "initial_acquired_count", "n_rounds", "k", "max_seeds_per_round",
+    "uncertainty_threshold", "energy_uncertainty_weight",
+    "force_uncertainty_weight", "seed", "device", "max_epochs",
+    "final_max_epochs", "batch_size", "r_max", "transfer_lr",
+    "final_transfer_lr", "energy_key", "forces_key", "hf_E0s",
+    "strategy", "strategy_kwargs", "loss_kwargs", "checkpoint_epochs",
+    "optimiser_lr", "optimiser_weight_decay", "max_grad_norm",
+    "scheduler_lr_factor", "scheduler_patience", "ema_decay",
+    "early_stopping", "stopping_patience", "patience", "restore_best",
+    "verbose",
 }
 
 
@@ -77,6 +91,12 @@ def load_config(config_path: Path) -> ActiveLearningConfig:
         raise ValueError(f"Invalid JSON in configuration file: {config_path}") from error
     if not isinstance(config, dict):
         raise ValueError("The top-level JSON value must be an object")
+    unknown = sorted(set(config).difference(_ALLOWED_FIELDS))
+    if unknown:
+        raise ValueError(
+            "Unknown active-learning configuration field(s): "
+            + ", ".join(repr(key) for key in unknown)
+        )
 
     lf_checkpoint = _existing_file(config, "lf_checkpoint", config_path)
     hf_xyz = _existing_file(config, "hf_xyz", config_path)
@@ -99,26 +119,27 @@ def load_config(config_path: Path) -> ActiveLearningConfig:
     if energy_uncertainty_weight == 0.0 and force_uncertainty_weight == 0.0:
         raise ValueError("At least one uncertainty weight must be positive")
 
-    seed = _int_with_default(config, "seed", SEED)
-    max_epochs = _positive_int(config, "max_epochs", default=MAX_EPOCHS)
+    seed = _int_with_default(config, "seed", DEFAULT_SEED)
+    max_epochs = _positive_int(config, "max_epochs", default=DEFAULT_MAX_EPOCHS)
     final_max_epochs = _positive_int(
         config, "final_max_epochs", default=max_epochs
     )
-    batch_size = _positive_int(config, "batch_size", default=BATCH_SIZE)
-    r_max = _positive_number(config, "r_max", default=R_MAX)
+    batch_size = _positive_int(config, "batch_size", default=DEFAULT_BATCH_SIZE)
+    r_max = _positive_number(config, "r_max", default=DEFAULT_R_MAX)
     learning_rate = _positive_number(
-        config, "transfer_lr", default=TRANSFER_LR
+        config, "transfer_lr", default=DEFAULT_TRANSFER_LEARNING_RATE
     )
     final_learning_rate = _positive_number(
         config, "final_transfer_lr", default=learning_rate
     )
     energy_key = _non_empty_string(config, "energy_key", default="REF_energy")
     forces_key = _non_empty_string(config, "forces_key", default="REF_forces")
-    checkpoint_epochs = _optional_positive_int(config, "checkpoint_epochs")
-    strategy = _strategy_from_config(config)
+    checkpoint_epochs = parse_checkpoint_epochs(config.get("checkpoint_epochs"))
+    strategy = parse_strategy(config.get("strategy", "naive"))
 
-    device_name = _non_empty_string(config, "device", default=DEVICE)
-    device = str(_validate_device(device_name))
+    device = validate_device_name(
+        _non_empty_string(config, "device", default=_ACTIVE_DEFAULT_DEVICE)
+    )
     loss_kwargs = _loss_kwargs(config)
 
     return ActiveLearningConfig(
@@ -144,17 +165,17 @@ def load_config(config_path: Path) -> ActiveLearningConfig:
         final_learning_rate=final_learning_rate,
         energy_key=energy_key,
         forces_key=forces_key,
-        e0s=_e0s_from_config(config, "hf_E0s"),
+        e0s=parse_e0s(config.get("hf_E0s"), "hf_E0s"),
         strategy=strategy,
-        strategy_kwargs=_strategy_kwargs_from_config(config, strategy),
-        trainer_options=_trainer_options_from_config(config),
+        strategy_kwargs=parse_strategy_kwargs(strategy, config.get("strategy_kwargs", {})),
+        trainer_options=parse_trainer_options(config),
         loss_kwargs=loss_kwargs,
         checkpoint_epochs=checkpoint_epochs,
     )
 
 
 def _existing_file(config: dict[str, Any], key: str, config_path: Path) -> Path:
-    path = _path(_non_empty_string(config, key), config_path)
+    path = resolve_path(_non_empty_string(config, key), key, config_path)
     if not path.is_file():
         raise FileNotFoundError(f"'{key}' file does not exist: {path}")
     return path

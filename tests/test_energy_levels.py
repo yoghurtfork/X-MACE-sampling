@@ -13,7 +13,7 @@ import numpy as np
 
 from sampling_methods import descriptors
 from sampling_methods.descriptors import get_ci_score
-from scripts.helper import _maes_by_state
+from scripts.evaluation import maes_by_state
 from scripts.read_azoflip_data import write_azobenzene_xyz
 
 
@@ -93,7 +93,7 @@ class EnergyLevelTests(unittest.TestCase):
 
     def test_maes_are_labelled_for_every_returned_state(self) -> None:
         self.assertEqual(
-            _maes_by_state([0.1, 0.2, 0.3, 0.4], "energy"),
+            maes_by_state([0.1, 0.2, 0.3, 0.4], "energy"),
             {"S0": 0.1, "S1": 0.2, "S2": 0.3, "S3": 0.4},
         )
 

@@ -11,7 +11,7 @@ from typing import Any, Iterable, Mapping
 
 import numpy as np
 
-from scripts.helper import _write_json
+from scripts.state import write_json
 
 
 _SCHEMA_VERSION = 1
@@ -27,7 +27,7 @@ class StateStore:
     def save(self, state: dict[str, Any]) -> None:
         """Atomically write state after updating its timestamp."""
         state["updated_at"] = _timestamp()
-        _write_json(self.result_path, state)
+        write_json(self.result_path, state)
 
     def load(self) -> dict[str, Any]:
         """Read a previously written state document."""
