@@ -5,15 +5,16 @@
 set -euo pipefail
 
 caller_dir=$(pwd -P)
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 usage() {
     cat <<'EOF'
-Usage: bash run-local-ensemble.sh [OPTIONS] structure_0001 [OPTIONS] [structure_0002 ...]
+Usage: bash run-local-ensemble.sh [OPTIONS] job-directory [OPTIONS] [job-directory ...]
 
 Options:
-  --reset                 Delete an existing <structure>/traj-allmols before rebuilding it.
+  --reset                 Delete an existing <job-directory>/traj-allmols before rebuilding it.
   --prepare-only          Create trajectory folders and inputs, but do not run SHARC.
-  --run-existing          Run trajectories already prepared in <structure>/traj-allmols.
+  --run-existing          Run trajectories already prepared in <job-directory>/traj-allmols.
   --model-file PATH       MACE model checkpoint; required when preparing an ensemble.
   --device VALUE          MACE device (default: cuda).
   --energy-unit VALUE     MACE energy unit (default: eV).
@@ -31,8 +32,8 @@ Options:
 Environment:
   SHARC=<path>            Required; the only configuration environment variable.
 
-Options may appear before, after, or between structure names; they apply to every
-structure in the command.
+Options may appear before, after, or between job directories; they apply to every
+job in the command. Job directories must be relative paths beneath sharc/.
 
 Preparation settings (--model-file, --device, --energy-unit, --distance-unit,
 --tmax-fs, --stepsize-fs, --nstates, --charge, and --seed) work in normal and
@@ -42,17 +43,17 @@ setting: it works in normal and --run-existing modes, but not with --prepare-onl
 
 Examples:
   # Prepare and run.
-  bash run-local-ensemble.sh structure_0001 --model-file model.pt --device cuda
+  bash run-local-ensemble.sh experiments/model-a --model-file model.pt --device cuda
 
   # Prepare without running.
-  bash run-local-ensemble.sh structure_0001 --prepare-only --model-file model.pt --seed 42
+  bash run-local-ensemble.sh experiments/model-a --prepare-only --model-file model.pt --seed 42
 
   # Run an existing ensemble on multiple GPUs.
-  bash run-local-ensemble.sh structure_0001 --run-existing --gpu-ids 0,1
+  bash run-local-ensemble.sh experiments/model-a --run-existing --gpu-ids 0,1
 EOF
 }
 
-structures=()
+jobs=()
 reset=false
 prepare_only=false
 run_existing=false
@@ -186,7 +187,7 @@ while [[ $# -gt 0 ]]; do
         -h|--help) usage; exit 0 ;;
         --*) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
         -*) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
-        *) structures+=("$1"); shift ;;
+        *) jobs+=("$1"); shift ;;
     esac
 done
 
@@ -223,8 +224,62 @@ if [[ "$run_existing" == true ]]; then
     done
 fi
 
-if [[ ${#structures[@]} -eq 0 ]]; then
+if [[ ${#jobs[@]} -eq 0 ]]; then
     usage >&2
+    exit 2
+fi
+
+# Validate every job before setup, reset, or trajectory execution. Resolving
+# each component also prevents a symlink from taking a job outside sharc/.
+validated_jobs=()
+job_validation_failed=false
+for job in "${jobs[@]}"; do
+    if [[ "$job" == /* ]]; then
+        echo "Job directory must be a relative path beneath sharc/: $job" >&2
+        job_validation_failed=true
+        continue
+    fi
+    if [[ "$job" == "" || "$job" == "." || "$job" == */../* || "$job" == ../* || "$job" == */.. || "$job" == ".." ]]; then
+        echo "Invalid job directory path: $job" >&2
+        job_validation_failed=true
+        continue
+    fi
+
+    path_so_far=$script_dir
+    path_has_symlink=false
+    IFS='/' read -r -a job_components <<< "$job"
+    for component in "${job_components[@]}"; do
+        [[ "$component" == "." || -z "$component" ]] && continue
+        path_so_far="$path_so_far/$component"
+        if [[ -L "$path_so_far" ]]; then
+            path_has_symlink=true
+            break
+        fi
+    done
+    if [[ "$path_has_symlink" == true ]]; then
+        echo "Job directory must not use symlinks: $job" >&2
+        job_validation_failed=true
+        continue
+    fi
+
+    if ! job_dir=$(realpath -e -- "$script_dir/$job" 2>/dev/null) || [[ ! -d "$job_dir" ]] || [[ "$job_dir" == "$script_dir" || "$job_dir" != "$script_dir/"* ]]; then
+        echo "Job directory must resolve to a directory beneath sharc/: $job" >&2
+        job_validation_failed=true
+        continue
+    fi
+    if [[ "$job_dir" == */traj-allmols || "$job_dir" == */traj-allmols/* ]]; then
+        echo "Job directory must not be inside traj-allmols/: $job" >&2
+        job_validation_failed=true
+        continue
+    fi
+    if [[ ! -f "$job_dir/initconds.excited" ]]; then
+        echo "Missing $job/initconds.excited" >&2
+        job_validation_failed=true
+        continue
+    fi
+    validated_jobs+=("${job_dir#$script_dir/}")
+done
+if [[ "$job_validation_failed" == true ]]; then
     exit 2
 fi
 
@@ -304,8 +359,6 @@ export PYTHONPATH="$sharc_root/lib${PYTHONPATH:+:$PYTHONPATH}"
 # Avoid a Numba cache-location error while setup_traj imports every interface.
 export NUMBA_DISABLE_JIT="${NUMBA_DISABLE_JIT:-1}"
 
-script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-
 is_cuda_device() {
     [[ "$1" == "cuda" || "$1" == cuda:* ]]
 }
@@ -318,8 +371,8 @@ if [[ "$gpu_ids_supplied" == true ]]; then
         fi
     else
         incompatible_device=false
-        for structure in "${structures[@]}"; do
-            mace_template="$script_dir/$structure/traj-allmols/QM_shared/MACE.template"
+        for job in "${validated_jobs[@]}"; do
+            mace_template="$script_dir/$job/traj-allmols/QM_shared/MACE.template"
             if [[ ! -f "$mace_template" ]]; then
                 echo "Cannot inspect MACE device; missing $mace_template" >&2
                 incompatible_device=true
@@ -401,14 +454,9 @@ run_trajectories() {
     done
 }
 
-for structure in "${structures[@]}"; do
-    structure_dir="$script_dir/$structure"
-    work_dir="$structure_dir/traj-allmols"
-
-    if [[ ! -f "$structure_dir/initconds.excited" ]]; then
-        echo "Missing $structure/initconds.excited; skipping." >&2
-        continue
-    fi
+for job in "${validated_jobs[@]}"; do
+    job_dir="$script_dir/$job"
+    work_dir="$job_dir/traj-allmols"
 
     if [[ "$run_existing" == false && -e "$work_dir" ]]; then
         if [[ "$reset" != true ]]; then
@@ -419,9 +467,9 @@ for structure in "${structures[@]}"; do
     fi
 
     if [[ "$run_existing" == false ]]; then
-        echo "=== Setting up $structure ==="
+        echo "=== Setting up job directory $job ==="
         setup_args=(
-            --initconds "$structure_dir/initconds.excited"
+            --initconds "$job_dir/initconds.excited"
             --output "$work_dir"
             --template "$script_dir/sh-scripts/MACE1.template"
             --resources "$script_dir/sh-scripts/MACE.resources"
@@ -444,11 +492,11 @@ for structure in "${structures[@]}"; do
     fi
 
     if [[ "$prepare_only" == true ]]; then
-        echo "Prepared $structure; no dynamics requested."
+        echo "Prepared job directory $job; no dynamics requested."
         continue
     fi
 
     run_trajectories "$work_dir"
 
-    echo "=== Finished $structure ==="
+    echo "=== Finished job directory $job ==="
 done
