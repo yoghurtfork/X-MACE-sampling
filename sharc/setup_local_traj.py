@@ -115,6 +115,10 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--template", type=Path, required=True)
     parser.add_argument("--resources", type=Path, required=True)
+    parser.add_argument("--model-file", type=Path, required=True)
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--energy-unit", default="eV")
+    parser.add_argument("--distance-unit", default="Ang")
     parser.add_argument("--nstates", help="SHARC singlet/doublet/triplet counts; default: file header")
     parser.add_argument("--charge", default="0 0 0")
     parser.add_argument("--tmax", type=float, default=10.0)
@@ -125,6 +129,9 @@ def main() -> None:
 
     if not args.initconds.is_file() or not args.template.is_file() or not args.resources.is_file():
         parser.error("--initconds, --template, and --resources must name existing files")
+    if not args.model_file.is_file():
+        parser.error("--model-file must name an existing regular file")
+    args.model_file = args.model_file.resolve()
     if args.output.exists():
         if not args.reset:
             parser.error(f"output already exists: {args.output} (use --reset to replace it)")
