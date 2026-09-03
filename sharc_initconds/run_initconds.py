@@ -54,7 +54,11 @@ def validate_setup(
     if input_path.suffix.lower() != ".xyz":
         raise ValueError(f"Input must be an XYZ file: {input_path}")
     energy_model = energy_model_path.expanduser().resolve()
-    osc_model = osc_model_path.expanduser().resolve() if osc_model_path is not None else None
+    osc_model = (
+        osc_model_path.expanduser().resolve()
+        if require_oscillator_model and osc_model_path is not None
+        else None
+    )
     if not energy_model.is_file():
         raise ValueError(f"--energy-model does not exist: {energy_model}")
     if require_oscillator_model and osc_model is None:
@@ -128,11 +132,58 @@ def validate_seed(seed: str) -> None:
         raise ValueError("--seed must be a non-negative integer or '!'")
 
 
-def run_workflow(
+def validate_workflow_settings(
     input_path: Path,
     *,
     energy_model_path: Path,
-    osc_model_path: Path | None = None,
+    osc_model_path: Path | None,
+    n_states: int,
+    n_osc: int,
+    ewin_low: float,
+    ewin_high: float,
+    temperature: float,
+    md_steps: int,
+    md_timestep_fs: float,
+    save_interval: int,
+    seed: str,
+    specified_states: list[int] | None,
+) -> tuple[Path, Path | None, Path]:
+    """Validate all launcher inputs before the workflow can change disk state."""
+    validate_specified_states(specified_states, n_states)
+    validate_seed(seed)
+    if n_states < 2:
+        raise ValueError("--n-states must be >= 2")
+    if temperature <= 0:
+        raise ValueError("--temperature must be positive")
+    if md_steps < 1:
+        raise ValueError("--md-steps must be at least 1")
+    if md_timestep_fs <= 0:
+        raise ValueError("--md-timestep-fs must be positive")
+    if save_interval < 1:
+        raise ValueError("--save-interval must be at least 1")
+    if save_interval > md_steps:
+        raise ValueError("--save-interval must not be greater than --md-steps")
+    if specified_states is None:
+        if n_osc < 1:
+            raise ValueError("--n-osc must be >= 1 in window mode")
+        if n_osc != n_states - 1:
+            raise ValueError("--n-osc must equal --n-states minus one in window mode")
+        if ewin_low >= ewin_high:
+            raise ValueError("--ewin-low must be lower than --ewin-high")
+    return validate_setup(
+        input_path,
+        energy_model_path,
+        osc_model_path,
+        require_oscillator_model=specified_states is None,
+    )
+
+
+def run_workflow(
+    input_path: Path,
+    *,
+    energy_model: Path,
+    osc_model: Path | None,
+    excite: Path,
     n_states: int = N_STATES,
     n_osc: int = N_OSC,
     ewin_low: float = EWIN_LOW,
@@ -145,14 +196,6 @@ def run_workflow(
     specified_states: list[int] | None = None,
 ) -> Path:
     input_path = input_path.expanduser().resolve()
-    validate_specified_states(specified_states, n_states)
-    validate_seed(seed)
-    energy_model, osc_model, excite = validate_setup(
-        input_path,
-        energy_model_path,
-        osc_model_path,
-        require_oscillator_model=specified_states is None,
-    )
     run_dir = input_path.with_name(f"{input_path.stem}_initconds")
     if run_dir.exists():
         raise FileExistsError(f"Refusing to overwrite existing run directory: {run_dir}")
@@ -341,23 +384,22 @@ def main(argv: list[str] | None = None) -> int:
         help=f"SHARC random seed (non-negative integer or !; default: {SEED})",
     )
     args = parser.parse_args(argv)
-    if args.n_states < 2 or (
-        args.specify_excited_states is None and args.n_osc != args.n_states - 1
-    ):
-        parser.error("--n-states must be >= 2 and --n-osc must equal --n-states minus one")
-    if args.specify_excited_states is None and args.ewin_low >= args.ewin_high:
-        parser.error("--ewin-low must be lower than --ewin-high")
-    if args.temperature <= 0 or args.md_steps < 1 or args.md_timestep_fs <= 0 or args.save_interval < 1:
-        parser.error("--temperature, --md-timestep-fs, and --save-interval must be positive; --md-steps must be at least 1")
     try:
         input_path = args.input_xyz.expanduser().resolve()
-        validate_specified_states(args.specify_excited_states, args.n_states)
-        validate_seed(args.seed)
-        validate_setup(
+        energy_model, osc_model, excite = validate_workflow_settings(
             input_path,
-            args.energy_model,
-            args.osc_model,
-            require_oscillator_model=args.specify_excited_states is None,
+            energy_model_path=args.energy_model,
+            osc_model_path=args.osc_model,
+            n_states=args.n_states,
+            n_osc=args.n_osc,
+            ewin_low=args.ewin_low,
+            ewin_high=args.ewin_high,
+            temperature=args.temperature,
+            md_steps=args.md_steps,
+            md_timestep_fs=args.md_timestep_fs,
+            save_interval=args.save_interval,
+            seed=args.seed,
+            specified_states=args.specify_excited_states,
         )
         run_dir = input_path.with_name(f"{input_path.stem}_initconds")
         if run_dir.exists():
@@ -369,8 +411,9 @@ def main(argv: list[str] | None = None) -> int:
             shutil.rmtree(run_dir)
         output = run_workflow(
             input_path,
-            energy_model_path=args.energy_model,
-            osc_model_path=args.osc_model,
+            energy_model=energy_model,
+            osc_model=osc_model,
+            excite=excite,
             n_states=args.n_states,
             n_osc=args.n_osc,
             ewin_low=args.ewin_low,
