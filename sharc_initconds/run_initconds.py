@@ -122,6 +122,12 @@ def validate_specified_states(states: list[int] | None, n_states: int) -> None:
         )
 
 
+def validate_seed(seed: str) -> None:
+    """Validate SHARC's random-seed syntax."""
+    if seed != "!" and (not seed.isdigit() or int(seed) < 0):
+        raise ValueError("--seed must be a non-negative integer or '!'")
+
+
 def run_workflow(
     input_path: Path,
     *,
@@ -135,10 +141,12 @@ def run_workflow(
     md_steps: int = MD_STEPS,
     md_timestep_fs: float = MD_TIMESTEP_FS,
     save_interval: int = SAVE_INTERVAL,
+    seed: str = SEED,
     specified_states: list[int] | None = None,
 ) -> Path:
     input_path = input_path.expanduser().resolve()
     validate_specified_states(specified_states, n_states)
+    validate_seed(seed)
     energy_model, osc_model, excite = validate_setup(
         input_path,
         energy_model_path,
@@ -205,7 +213,14 @@ def run_workflow(
             + (
                 ["--specified-states", *map(str, specified_states)]
                 if specified_states is not None
-                else ["--ewin-low", str(ewin_low), "--ewin-high", str(ewin_high)]
+                else [
+                    "--ewin-low",
+                    str(ewin_low),
+                    "--ewin-high",
+                    str(ewin_high),
+                    "--seed",
+                    seed,
+                ]
             ),
             "05_excite_input.log",
         ),
@@ -320,6 +335,11 @@ def main(argv: list[str] | None = None) -> int:
         "--save-interval", type=int, default=SAVE_INTERVAL,
         help=f"trajectory save interval in MD steps (default: {SAVE_INTERVAL})",
     )
+    parser.add_argument(
+        "--seed",
+        default=SEED,
+        help=f"SHARC random seed (non-negative integer or !; default: {SEED})",
+    )
     args = parser.parse_args(argv)
     if args.n_states < 2 or (
         args.specify_excited_states is None and args.n_osc != args.n_states - 1
@@ -332,6 +352,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         input_path = args.input_xyz.expanduser().resolve()
         validate_specified_states(args.specify_excited_states, args.n_states)
+        validate_seed(args.seed)
         validate_setup(
             input_path,
             args.energy_model,
@@ -358,6 +379,7 @@ def main(argv: list[str] | None = None) -> int:
             md_steps=args.md_steps,
             md_timestep_fs=args.md_timestep_fs,
             save_interval=args.save_interval,
+            seed=args.seed,
             specified_states=args.specify_excited_states,
         )
     except (ValueError, FileExistsError, subprocess.CalledProcessError, RuntimeError) as error:

@@ -6,13 +6,13 @@ import argparse
 from pathlib import Path
 
 
-def run(model: Path, n_states: int, n_frames: int) -> None:
+def run(model: Path, n_states: int) -> None:
     import numpy as np
     from ase.io import read, write
     from mace.calculators import MACECalculator
 
     write("md_trajectory.xyz", read("md_trajectory.traj", index=":"))
-    atoms_list = read("md_trajectory.xyz", index=f"0:{n_frames}")
+    atoms_list = read("md_trajectory.xyz", index=":")
     calculator = MACECalculator(model_paths=str(model), n_energies=n_states, device="cuda")
     all_energies = []
     for atoms in atoms_list:
@@ -31,13 +31,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, type=Path)
     parser.add_argument("--n-states", type=int, required=True)
-    parser.add_argument("--n-frames", type=int, default=101)
     args = parser.parse_args(argv)
     if not args.model.is_file():
         parser.error(f"--model does not exist: {args.model}")
-    if args.n_states < 1 or args.n_frames < 2:
-        parser.error("--n-states must be >= 1 and --n-frames must be >= 2")
-    run(args.model.resolve(), args.n_states, args.n_frames)
+    if args.n_states < 1:
+        parser.error("--n-states must be >= 1")
+    run(args.model.resolve(), args.n_states)
     return 0
 
 
