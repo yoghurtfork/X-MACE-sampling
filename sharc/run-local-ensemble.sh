@@ -8,24 +8,47 @@ caller_dir=$(pwd -P)
 
 usage() {
     cat <<'EOF'
-Usage: bash run-local-ensemble.sh [--reset] [--prepare-only|--run-existing] structure_0001 [structure_0002 ...]
+Usage: bash run-local-ensemble.sh [OPTIONS] structure_0001 [OPTIONS] [structure_0002 ...]
 
 Options:
-  --reset         Delete an existing <structure>/traj-allmols before rebuilding it.
-  --prepare-only  Create trajectory folders and inputs, but do not run SHARC.
-  --run-existing  Run trajectories already prepared in <structure>/traj-allmols.
+  --reset                 Delete an existing <structure>/traj-allmols before rebuilding it.
+  --prepare-only          Create trajectory folders and inputs, but do not run SHARC.
+  --run-existing          Run trajectories already prepared in <structure>/traj-allmols.
+  --model-file PATH       MACE model checkpoint; required when preparing an ensemble.
+  --device VALUE          MACE device (default: cuda).
+  --energy-unit VALUE     MACE energy unit (default: eV).
+  --distance-unit VALUE   MACE distance unit (default: Ang).
+  --tmax-fs NUMBER        Trajectory duration in fs (default: 10.0).
+  --stepsize-fs NUMBER    Propagation timestep in fs (default: 0.5).
+  --nstates COUNTS        SHARC state counts; default: States header in initconds.excited.
+  --charge CHARGES        Molecular charges (default: "0 0 0").
+  --seed INTEGER          Seed for deterministic, per-trajectory SHARC seeds (default: 42).
+  --gpu-ids IDS           Comma-separated physical GPU IDs, e.g. 0,1. One trajectory
+                          per listed GPU runs concurrently; without this option, runs
+                          are sequential.
+  -h, --help              Show this help message.
 
 Environment:
-  SHARC=<path>             Required; SHARC installation directory.
-  LOCAL_TMAX_FS=<number>   Test trajectory length in fs (default: 10.0).
-  LOCAL_STEPSIZE_FS=<num>  Propagation timestep in fs (default: 0.5).
-  LOCAL_NSTATES=<counts>   Optional SHARC state counts, e.g. "2 0 0".
-  LOCAL_CHARGE=<charges>   Molecular charges, default: "0 0 0".
-  LOCAL_GPU_IDS=<ids>      Comma-separated GPU IDs, e.g. "0,1". Runs one
-                           trajectory per listed GPU concurrently.
+  SHARC=<path>            Required; the only configuration environment variable.
 
-Without LOCAL_GPU_IDS, trajectories run sequentially. The checkpoint and MACE
-device are read from sh-scripts/MACE1.template.
+Options may appear before, after, or between structure names; they apply to every
+structure in the command.
+
+Preparation settings (--model-file, --device, --energy-unit, --distance-unit,
+--tmax-fs, --stepsize-fs, --nstates, --charge, and --seed) work in normal and
+--prepare-only modes. They cannot be used with --run-existing, because that mode
+uses the configuration stored in the prepared ensemble. --gpu-ids is an execution
+setting: it works in normal and --run-existing modes, but not with --prepare-only.
+
+Examples:
+  # Prepare and run.
+  bash run-local-ensemble.sh structure_0001 --model-file model.pt --device cuda
+
+  # Prepare without running.
+  bash run-local-ensemble.sh structure_0001 --prepare-only --model-file model.pt --seed 42
+
+  # Run an existing ensemble on multiple GPUs.
+  bash run-local-ensemble.sh structure_0001 --run-existing --gpu-ids 0,1
 EOF
 }
 
@@ -318,20 +341,7 @@ if [[ "$gpu_ids_supplied" == true ]]; then
     fi
 fi
 
-gpu_ids=()
-if [[ -n "${LOCAL_GPU_IDS:-}" ]]; then
-    IFS=',' read -r -a gpu_ids <<< "$LOCAL_GPU_IDS"
-    for gpu_id in "${gpu_ids[@]}"; do
-        if [[ ! "$gpu_id" =~ ^[0-9]+$ ]]; then
-            echo "LOCAL_GPU_IDS must be comma-separated numeric GPU IDs, e.g. 0,1." >&2
-            exit 2
-        fi
-    done
-    if ! grep -Eq '^device[[:space:]]+cuda' "$script_dir/sh-scripts/MACE1.template"; then
-        echo "GPU scheduling requires 'device cuda' in sh-scripts/MACE1.template." >&2
-        exit 1
-    fi
-fi
+gpu_ids=("${validated_gpu_ids[@]}")
 
 run_trajectory() {
     local trajectory_dir=$1
