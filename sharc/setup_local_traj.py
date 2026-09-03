@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 import random
+import re
 import shutil
 from pathlib import Path
 
@@ -44,6 +45,42 @@ nospinorbit
 output_format ascii
 output_dat_steps 1
 """
+
+
+MACE_TEMPLATE_SETTINGS = ("model_file", "device", "energy_unit", "distance_unit")
+
+
+def render_mace_template(template: Path, settings: dict[str, str]) -> str:
+    """Return a base MACE template with this run's settings substituted."""
+    lines = template.read_text(encoding="utf-8").splitlines(keepends=True)
+    occurrences = {setting: [] for setting in MACE_TEMPLATE_SETTINGS}
+
+    for index, line in enumerate(lines):
+        body = line.rstrip("\r\n")
+        stripped = body.lstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        key = stripped.split(None, 1)[0]
+        if key in occurrences:
+            occurrences[key].append(index)
+
+    for setting, indices in occurrences.items():
+        if not indices:
+            raise ValueError(f"MACE template is missing required setting: {setting}")
+        if len(indices) > 1:
+            raise ValueError(f"MACE template contains duplicate setting: {setting}")
+
+    for setting, indices in occurrences.items():
+        index = indices[0]
+        line = lines[index]
+        body = line.rstrip("\r\n")
+        newline = line[len(body):]
+        leading = body[: len(body) - len(body.lstrip())]
+        suffix_match = re.search(r"\s+#.*$", body)
+        suffix = suffix_match.group(0) if suffix_match else ""
+        lines[index] = f"{leading}{setting} {settings[setting]}{suffix}{newline}"
+
+    return "".join(lines)
 
 
 def parse_conditions(path: Path) -> tuple[int, float, str, list[tuple[int, list[str], list[int]]]]:
@@ -132,6 +169,18 @@ def main() -> None:
     if not args.model_file.is_file():
         parser.error("--model-file must name an existing regular file")
     args.model_file = args.model_file.resolve()
+    try:
+        rendered_mace_template = render_mace_template(
+            args.template,
+            {
+                "model_file": str(args.model_file),
+                "device": args.device,
+                "energy_unit": args.energy_unit,
+                "distance_unit": args.distance_unit,
+            },
+        )
+    except ValueError as error:
+        parser.error(str(error))
     if args.output.exists():
         if not args.reset:
             parser.error(f"output already exists: {args.output} (use --reset to replace it)")
@@ -142,8 +191,8 @@ def main() -> None:
     args.output.mkdir(parents=True)
     qm_shared = args.output / "QM_shared"
     qm_shared.mkdir()
-    (qm_shared / "MACE.template").symlink_to(args.template.resolve())
-    (qm_shared / "MACE.resources").symlink_to(args.resources.resolve())
+    (qm_shared / "MACE.template").write_text(rendered_mace_template, encoding="utf-8")
+    shutil.copy2(args.resources, qm_shared / "MACE.resources")
 
     rng = random.Random(args.seed)
     counters: dict[int, int] = {}
