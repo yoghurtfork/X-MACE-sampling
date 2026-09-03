@@ -24,12 +24,13 @@ OSC_MODEL = "../outputs/osc_strength_models/osc_strength_azobenzene.model"
 
 N_STATES = 2
 N_OSC = 1
-EWIN_LOW = 0
-EWIN_HIGH = 20
-TEMPERATURE = 300
+EWIN_LOW = 0.0
+EWIN_HIGH = 20.0
+TEMPERATURE = 300.0
 MD_STEPS = 1010
-MD_TIMESTEP_FS = 1
+MD_TIMESTEP_FS = 1.0
 SAVE_INTERVAL = 10
+SEED = "42"
 
 
 def _is_placeholder(value: str) -> bool:

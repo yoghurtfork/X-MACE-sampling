@@ -29,7 +29,7 @@ def run(model: Path, n_osc: int) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, type=Path)
-    parser.add_argument("--n-osc", type=int, default=2)
+    parser.add_argument("--n-osc", type=int, required=True)
     args = parser.parse_args(argv)
     if not args.model.is_file():
         parser.error(f"--model does not exist: {args.model}")

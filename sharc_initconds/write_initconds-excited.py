@@ -7,9 +7,9 @@ import argparse
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ewin-low", type=float, default=1.6, help="lower excitation-window bound in eV")
-    parser.add_argument("--ewin-high", type=float, default=3.3, help="upper excitation-window bound in eV")
-    parser.add_argument("--seed", default="1234", help="random seed, or ! for system time")
+    parser.add_argument("--ewin-low", type=float, help="lower excitation-window bound in eV")
+    parser.add_argument("--ewin-high", type=float, help="upper excitation-window bound in eV")
+    parser.add_argument("--seed", help="random seed, or ! for system time")
     parser.add_argument(
         "--specified-states",
         type=int,

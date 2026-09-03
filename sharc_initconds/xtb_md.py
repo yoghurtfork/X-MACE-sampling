@@ -6,19 +6,13 @@ import argparse
 from pathlib import Path
 
 
-TEMPERATURE_K = 300
-MD_STEPS = 1010
-MD_TIMESTEP_FS = 1
-SAVE_INTERVAL = 10
-
-
 def run(
     input_xyz: Path,
     *,
-    temperature: float = TEMPERATURE_K,
-    md_steps: int = MD_STEPS,
-    md_timestep_fs: float = MD_TIMESTEP_FS,
-    save_interval: int = SAVE_INTERVAL,
+    temperature: float,
+    md_steps: int,
+    md_timestep_fs: float,
+    save_interval: int,
 ) -> None:
     from ase import units
     from ase.io import read
@@ -57,10 +51,10 @@ def run(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input_xyz", type=Path, help="single-geometry XYZ input file")
-    parser.add_argument("--temperature", type=float, default=TEMPERATURE_K, help=f"initial temperature in K (default: {TEMPERATURE_K})")
-    parser.add_argument("--md-steps", type=int, default=MD_STEPS, help=f"number of MD steps (default: {MD_STEPS})")
-    parser.add_argument("--md-timestep-fs", type=float, default=MD_TIMESTEP_FS, help=f"MD timestep in fs (default: {MD_TIMESTEP_FS})")
-    parser.add_argument("--save-interval", type=int, default=SAVE_INTERVAL, help=f"trajectory save interval in MD steps (default: {SAVE_INTERVAL})")
+    parser.add_argument("--temperature", type=float, required=True, help="initial temperature in K")
+    parser.add_argument("--md-steps", type=int, required=True, help="number of MD steps")
+    parser.add_argument("--md-timestep-fs", type=float, required=True, help="MD timestep in fs")
+    parser.add_argument("--save-interval", type=int, required=True, help="trajectory save interval in MD steps")
     args = parser.parse_args(argv)
     if args.input_xyz.suffix.lower() != ".xyz" or not args.input_xyz.is_file():
         parser.error(f"input_xyz must be an existing XYZ file: {args.input_xyz}")

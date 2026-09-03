@@ -120,8 +120,8 @@ def run(n_states: int, n_osc: int, *, without_oscillator_strengths: bool = False
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--n-states", type=int, default=3)
-    parser.add_argument("--n-osc", type=int, default=2)
+    parser.add_argument("--n-states", type=int, required=True)
+    parser.add_argument("--n-osc", type=int, required=True)
     parser.add_argument(
         "--without-oscillator-strengths",
         action="store_true",

@@ -30,7 +30,7 @@ def run(model: Path, n_states: int, n_frames: int) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, type=Path)
-    parser.add_argument("--n-states", type=int, default=3)
+    parser.add_argument("--n-states", type=int, required=True)
     parser.add_argument("--n-frames", type=int, default=101)
     args = parser.parse_args(argv)
     if not args.model.is_file():
