@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run the SHARC initial-condition workflow from one XYZ structure.
 
-Set model paths below, set SHARC to a SHARC installation
-root (or its bin directory), then run ``python run_initconds.py molecule.xyz``.
+Set SHARC to a SHARC installation root (or its bin directory), then run
+``python run_initconds.py molecule.xyz --energy-model PATH``.
 """
 
 from __future__ import annotations
@@ -17,11 +17,6 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
-# Paths are relative to this script, so the repository can be moved or cloned
-# anywhere. Replace these with other relative model paths if needed.
-ENERGY_MODEL = "../outputs/base_models/base_model_azoflip.pt"
-OSC_MODEL = "../outputs/osc_strength_models/osc_strength_azobenzene.model"
-
 N_STATES = 2
 N_OSC = 1
 EWIN_LOW = 0.0
@@ -31,10 +26,6 @@ MD_STEPS = 1010
 MD_TIMESTEP_FS = 1.0
 SAVE_INTERVAL = 10
 SEED = "42"
-
-
-def _is_placeholder(value: str) -> bool:
-    return not value or value.startswith("EDIT_ME:") or value.startswith("/path/to/")
 
 
 def resolve_excite(sharc: str | None) -> Path:
@@ -52,32 +43,24 @@ def resolve_excite(sharc: str | None) -> Path:
 
 
 def validate_setup(
-    input_path: Path, *, require_oscillator_model: bool = True
+    input_path: Path,
+    energy_model_path: Path,
+    osc_model_path: Path | None = None,
+    *,
+    require_oscillator_model: bool = True,
 ) -> tuple[Path, Path | None, Path]:
-    if input_path.suffix.lower() != ".xyz":
-        raise ValueError(f"Input must be an XYZ file: {input_path}")
     if not input_path.is_file():
         raise ValueError(f"Input XYZ file does not exist: {input_path}")
-    if _is_placeholder(ENERGY_MODEL):
-        raise ValueError(
-            "Set ENERGY_MODEL at the top of sharc_initconds/run_initconds.py "
-            "before running."
-        )
-    if require_oscillator_model and _is_placeholder(OSC_MODEL):
-        raise ValueError(
-            "Set ENERGY_MODEL and OSC_MODEL at the top of "
-            "sharc_initconds/run_initconds.py before running."
-        )
-    energy_model = (SCRIPT_DIR / Path(ENERGY_MODEL).expanduser()).resolve()
-    osc_model = (
-        (SCRIPT_DIR / Path(OSC_MODEL).expanduser()).resolve()
-        if require_oscillator_model
-        else None
-    )
+    if input_path.suffix.lower() != ".xyz":
+        raise ValueError(f"Input must be an XYZ file: {input_path}")
+    energy_model = energy_model_path.expanduser().resolve()
+    osc_model = osc_model_path.expanduser().resolve() if osc_model_path is not None else None
     if not energy_model.is_file():
-        raise ValueError(f"ENERGY_MODEL does not exist: {energy_model}")
-    if osc_model is not None and not osc_model.is_file():
-        raise ValueError(f"OSC_MODEL does not exist: {osc_model}")
+        raise ValueError(f"--energy-model does not exist: {energy_model}")
+    if require_oscillator_model and osc_model is None:
+        raise ValueError("--osc-model is required unless --specify-excited-states is supplied")
+    if require_oscillator_model and not osc_model.is_file():
+        raise ValueError(f"--osc-model does not exist: {osc_model}")
     return energy_model, osc_model, resolve_excite(os.environ.get("SHARC"))
 
 
@@ -142,6 +125,8 @@ def validate_specified_states(states: list[int] | None, n_states: int) -> None:
 def run_workflow(
     input_path: Path,
     *,
+    energy_model_path: Path,
+    osc_model_path: Path | None = None,
     n_states: int = N_STATES,
     n_osc: int = N_OSC,
     ewin_low: float = EWIN_LOW,
@@ -155,7 +140,10 @@ def run_workflow(
     input_path = input_path.expanduser().resolve()
     validate_specified_states(specified_states, n_states)
     energy_model, osc_model, excite = validate_setup(
-        input_path, require_oscillator_model=specified_states is None
+        input_path,
+        energy_model_path,
+        osc_model_path,
+        require_oscillator_model=specified_states is None,
     )
     run_dir = input_path.with_name(f"{input_path.stem}_initconds")
     if run_dir.exists():
@@ -283,6 +271,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input_xyz", type=Path, help="single-geometry XYZ input file")
     parser.add_argument(
+        "--energy-model",
+        required=True,
+        type=Path,
+        help="path to the X-MACE multi-state energy model",
+    )
+    parser.add_argument(
+        "--osc-model",
+        type=Path,
+        help="path to the X-MACE oscillator-strength model",
+    )
+    parser.add_argument(
         "--n-states", type=int, default=N_STATES,
         help=f"number of electronic states (default: {N_STATES})",
     )
@@ -335,6 +334,8 @@ def main(argv: list[str] | None = None) -> int:
         validate_specified_states(args.specify_excited_states, args.n_states)
         validate_setup(
             input_path,
+            args.energy_model,
+            args.osc_model,
             require_oscillator_model=args.specify_excited_states is None,
         )
         run_dir = input_path.with_name(f"{input_path.stem}_initconds")
@@ -347,6 +348,8 @@ def main(argv: list[str] | None = None) -> int:
             shutil.rmtree(run_dir)
         output = run_workflow(
             input_path,
+            energy_model_path=args.energy_model,
+            osc_model_path=args.osc_model,
             n_states=args.n_states,
             n_osc=args.n_osc,
             ewin_low=args.ewin_low,
