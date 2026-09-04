@@ -1,0 +1,14 @@
+{
+  "ignore": false,
+  "mode": "run",
+  "reset": true,
+  "model_file": "ethene_04_augmented_dynamic_manual.pt",
+  "device": "cuda",
+  "energy_unit": "eV",
+  "distance_unit": "Ang",
+  "tmax_fs": 100.0,
+  "stepsize_fs": 0.5,
+  "nstates": [3, 0, 0],
+  "charge": [0, 0, 0],
+  "seed": 42
+}
