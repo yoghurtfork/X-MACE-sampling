@@ -8,6 +8,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -26,7 +27,6 @@ ALLOWED_KEYS = {
     "nstates",
     "charge",
     "seed",
-    "gpu_ids",
 }
 DEFAULTS = {
     "ignore": False,
@@ -129,18 +129,12 @@ def validate_job(input_json: Path, sharc_dir: Path) -> tuple[JobConfig | None, l
         errors.append(f"{label}: nstates must be a non-empty array of non-negative integers")
     if not is_integer_list(values["charge"], allow_negative=True):
         errors.append(f"{label}: charge must be a non-empty array of integers")
-    if "gpu_ids" in values:
-        gpu_ids = values["gpu_ids"]
-        if not is_integer_list(gpu_ids, allow_negative=False) or len(set(gpu_ids)) != len(gpu_ids):
-            errors.append(f"{label}: gpu_ids must be a non-empty array of unique non-negative integers")
     for key in ("device", "energy_unit", "distance_unit"):
         if not is_single_token(values[key]):
             errors.append(f"{label}: {key} must be a non-empty single-token string")
 
-    if mode == "prepare-only" and "gpu_ids" in raw:
-        errors.append(f"{label}: gpu_ids is not allowed with mode prepare-only")
     if mode == "run-existing":
-        forbidden = sorted(set(raw) - {"ignore", "mode", "gpu_ids"})
+        forbidden = sorted(set(raw) - {"ignore", "mode"})
         for key in forbidden:
             errors.append(f"{label}: {key} is not allowed with mode run-existing")
     elif "model_file" not in raw:
@@ -159,7 +153,7 @@ def validate_job(input_json: Path, sharc_dir: Path) -> tuple[JobConfig | None, l
     return JobConfig(input_json.parent, relative_path, values), [], False
 
 
-def runner_arguments(job: JobConfig, sharc_dir: Path) -> list[str]:
+def runner_arguments(job: JobConfig, sharc_dir: Path, gpu_ids: str | None) -> list[str]:
     """Translate one validated JSON job to the shell runner's arguments."""
     values = job.values
     mode = values["mode"]
@@ -196,14 +190,31 @@ def runner_arguments(job: JobConfig, sharc_dir: Path) -> list[str]:
         if "nstates" in values:
             args.extend(("--nstates", " ".join(str(value) for value in values["nstates"])))
 
-    if "gpu_ids" in values:
-        args.extend(("--gpu-ids", ",".join(str(value) for value in values["gpu_ids"])))
+    if gpu_ids is not None and mode != "prepare-only":
+        args.extend(("--gpu-ids", gpu_ids))
     return args
 
 
+def parse_gpu_ids(arguments: list[str]) -> tuple[str | None, str | None]:
+    """Parse the optional global GPU-ID list and return an error, if any."""
+    if not arguments:
+        return None, None
+    if len(arguments) != 2 or arguments[0] != "--gpu-ids":
+        return None, "Usage: python sharc/run-jobs.py [--gpu-ids 0,1,2,3]"
+
+    gpu_ids = arguments[1]
+    if not re.fullmatch(r"\d+(?:,\d+)*", gpu_ids):
+        return None, "--gpu-ids must be unique comma-separated non-negative integers, e.g. 0,1."
+    parsed_ids = [int(value) for value in gpu_ids.split(",")]
+    if len(parsed_ids) != len(set(parsed_ids)):
+        return None, "--gpu-ids must be unique comma-separated non-negative integers, e.g. 0,1."
+    return gpu_ids, None
+
+
 def main() -> int:
-    if len(sys.argv) != 1:
-        print("Usage: python sharc/run-jobs.py", file=sys.stderr)
+    gpu_ids, argument_error = parse_gpu_ids(sys.argv[1:])
+    if argument_error:
+        print(argument_error, file=sys.stderr)
         return 2
 
     sharc_dir = Path(__file__).resolve().parent
@@ -236,7 +247,7 @@ def main() -> int:
     for job in enabled_jobs:
         try:
             result = subprocess.run(
-                runner_arguments(job, sharc_dir),
+                runner_arguments(job, sharc_dir, gpu_ids),
                 cwd=sharc_dir,
                 env=os.environ.copy(),
                 shell=False,
