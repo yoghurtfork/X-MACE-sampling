@@ -1,0 +1,6 @@
+                                         #Use file "initconds"? [True] 
+                                         #How should the excited-state lists be generated? [3] 
+2                                        #How should the excited states be flagged? [3] 
+-inf inf                                 #Range (eV): [0.0 10.0] 
+2                                        #List of initial states: (range comprehension enabled) 
+                                         #Do you want to continue? [True] 
