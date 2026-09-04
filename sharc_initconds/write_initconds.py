@@ -29,12 +29,21 @@ def effective_transition_dipole(oscillator_strength: float, gap_ha: float) -> tu
     return math.sqrt(3.0 * oscillator_strength / (2.0 * gap_ha)), False
 
 
-def run(n_states: int, n_osc: int, *, without_oscillator_strengths: bool = False) -> None:
+def run(
+    n_states: int,
+    n_osc: int,
+    *,
+    energy_unit: str,
+    without_oscillator_strengths: bool = False,
+) -> None:
     import numpy as np
     from ase import units
     from ase.data import atomic_masses
     from ase.io import read
 
+    if energy_unit not in {"eV", "hartree"}:
+        raise ValueError("energy_unit must be 'eV' or 'hartree'")
+    energy_to_hartree = 1.0 / units.Hartree if energy_unit == "eV" else 1.0
     input_filename = (
         "md_traj_with-energies.xyz"
         if without_oscillator_strengths
@@ -48,6 +57,7 @@ def run(n_states: int, n_osc: int, *, without_oscillator_strengths: bool = False
         raise ValueError(f"Energy trajectory contains {len(reference_energies)} states; expected {n_states}")
     if not np.isfinite(reference_energies).all():
         raise ValueError("Equilibrium-frame predicted state energies must all be finite.")
+    reference_energies = reference_energies * energy_to_hartree
 
     clamped_oscillators = 0
     with open("initconds", "w", encoding="utf-8") as output:
@@ -72,10 +82,11 @@ def run(n_states: int, n_osc: int, *, without_oscillator_strengths: bool = False
                 raise ValueError(f"Frame {index}: predicted state energies must all be finite.")
             if not np.isfinite(oscillator_strengths).all():
                 raise ValueError(f"Frame {index}: predicted oscillator strengths must all be finite.")
+            energies = energies * energy_to_hartree
             positions = frame.get_positions() / units.Bohr
             velocities = frame.get_velocities() * VEL_CONV
             kinetic = frame.get_kinetic_energy() / units.Hartree
-            potential = (reference_energies[0] - energies[0]) # * EV_TO_HA
+            potential = energies[0] - reference_energies[0]
             atom_lines = [
                 f"{atom.symbol} {atom.number:.1f} {position[0]:.8f} {position[1]:.8f} {position[2]:.8f} "
                 f"{atomic_masses[atom.number]:.8f} {velocity[0]:.8f} {velocity[1]:.8f} {velocity[2]:.8f}\n"
@@ -89,9 +100,9 @@ def run(n_states: int, n_osc: int, *, without_oscillator_strengths: bool = False
             output.writelines(atom_lines)
             output.write("States\n")
             for state in range(n_states):
-                energy = float(energies[state]) # * EV_TO_HA
-                ground = float(energies[0]) # * EV_TO_HA
-                gap = float(energies[state] - energies[0]) # * EV_TO_HA
+                energy = float(energies[state])
+                ground = float(energies[0])
+                gap = float(energies[state] - energies[0])
                 oscillator = 0.0 if state == 0 else float(oscillator_strengths[state - 1])
                 dipole_x = 0.0
                 if state > 0 and not without_oscillator_strengths:
@@ -122,6 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n-states", type=int, required=True)
     parser.add_argument("--n-osc", type=int, required=True)
+    parser.add_argument("--energy-unit", choices=("eV", "hartree"), required=True)
     parser.add_argument(
         "--without-oscillator-strengths",
         action="store_true",
@@ -135,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     run(
         args.n_states,
         args.n_osc,
+        energy_unit=args.energy_unit,
         without_oscillator_strengths=args.without_oscillator_strengths,
     )
     return 0

@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 
-def run(model: Path, n_states: int) -> None:
+def run(model: Path, n_states: int, energy_unit: str) -> None:
     import numpy as np
     from ase.io import read, write
     from mace.calculators import MACECalculator
@@ -22,7 +22,11 @@ def run(model: Path, n_states: int) -> None:
             raise ValueError(f"Model returned {energy_array.shape[1]} states; expected {n_states}")
         all_energies.append(energy_array.ravel())
         atoms.info = {"REF_energy": energy_array}
-    np.savetxt("predicted_energies.txt", np.asarray(all_energies), header="Energies (eV): rows=geometries, columns=states")
+    np.savetxt(
+        "predicted_energies.txt",
+        np.asarray(all_energies),
+        header=f"Energies ({energy_unit}): rows=geometries, columns=states",
+    )
     write("md_traj_with-energies.xyz", atoms_list)
     print(f"Written {len(atoms_list)} frames to 'md_traj_with-energies.xyz'")
 
@@ -31,12 +35,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, type=Path)
     parser.add_argument("--n-states", type=int, required=True)
+    parser.add_argument("--energy-unit", choices=("eV", "hartree"), required=True)
     args = parser.parse_args(argv)
     if not args.model.is_file():
         parser.error(f"--model does not exist: {args.model}")
     if args.n_states < 1:
         parser.error("--n-states must be >= 1")
-    run(args.model.resolve(), args.n_states)
+    run(args.model.resolve(), args.n_states, args.energy_unit)
     return 0
 
 

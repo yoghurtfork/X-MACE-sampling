@@ -26,6 +26,7 @@ MD_STEPS = 1010
 MD_TIMESTEP_FS = 1.0
 SAVE_INTERVAL = 10
 SEED = "42"
+ENERGY_UNIT = "eV"
 
 
 def resolve_excite(sharc: str | None) -> Path:
@@ -193,6 +194,7 @@ def run_workflow(
     md_timestep_fs: float = MD_TIMESTEP_FS,
     save_interval: int = SAVE_INTERVAL,
     seed: str = SEED,
+    energy_unit: str = ENERGY_UNIT,
     specified_states: list[int] | None = None,
 ) -> Path:
     input_path = input_path.expanduser().resolve()
@@ -230,6 +232,8 @@ def run_workflow(
                 str(energy_model),
                 "--n-states",
                 str(n_states),
+                "--energy-unit",
+                energy_unit,
             ],
             "02_energies.log",
         ),
@@ -243,6 +247,8 @@ def run_workflow(
                 str(n_states),
                 "--n-osc",
                 str(n_osc),
+                "--energy-unit",
+                energy_unit,
             ] + (["--without-oscillator-strengths"] if specified_states is not None else []),
             "04_initconds.log",
         ),
@@ -383,6 +389,12 @@ def main(argv: list[str] | None = None) -> int:
         default=SEED,
         help=f"SHARC random seed (non-negative integer or !; default: {SEED})",
     )
+    parser.add_argument(
+        "--energy-unit",
+        choices=("eV", "hartree"),
+        default=ENERGY_UNIT,
+        help=f"unit emitted by the energy model (default: {ENERGY_UNIT})",
+    )
     args = parser.parse_args(argv)
     try:
         input_path = args.input_xyz.expanduser().resolve()
@@ -399,6 +411,7 @@ def main(argv: list[str] | None = None) -> int:
             md_timestep_fs=args.md_timestep_fs,
             save_interval=args.save_interval,
             seed=args.seed,
+            energy_unit=args.energy_unit,
             specified_states=args.specify_excited_states,
         )
         run_dir = input_path.with_name(f"{input_path.stem}_initconds")
