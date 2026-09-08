@@ -38,7 +38,7 @@ from state import (
 )
 from uncertainty import committee_uncertainty
 from scripts.data import read_atoms, resolved_e0s
-from scripts.evaluation import evaluate_model
+from scripts.evaluation import evaluate_checkpoint_models, evaluate_model
 from scripts.model import apply_training_strategy, load_model, validate_device
 from scripts.state import reserve_run_dir, save_model
 
@@ -441,12 +441,15 @@ def _train_final_production_model(
         lr=config.final_learning_rate,
         weight_decay=trainer.optimiser_weight_decay,
     )
+    model_dir = run_dir / "final_production_model"
+    checkpoint_interval = config.final_production_model_checkpoint_epochs
     history: dict[str, Any] = {
         "epoch": [],
         "train_loss": [],
         "train_energy_mae": [],
         "train_force_mae": [],
         "learning_rate": [],
+        "checkpoint_models": [],
     }
     started_at = time.time()
     for epoch in range(1, config.final_max_epochs + 1):
@@ -459,6 +462,13 @@ def _train_final_production_model(
         history["train_energy_mae"].append(float(metrics["energy_mae"]))
         history["train_force_mae"].append(float(metrics["force_mae"]))
         history["learning_rate"].append(float(learning_rate))
+        if checkpoint_interval is not None and epoch % checkpoint_interval == 0:
+            checkpoint_path = save_model(
+                model.state_dict(), model_dir / f"checkpoint_epoch_{epoch}.pt"
+            )
+            history["checkpoint_models"].append(
+                {"epoch": epoch, "path": str(checkpoint_path)}
+            )
         _print_final_epoch(
             epoch=epoch,
             max_epochs=config.final_max_epochs,
@@ -467,7 +477,7 @@ def _train_final_production_model(
             verbose=config.trainer_options["verbose"],
         )
     history["stopped_epoch"] = config.final_max_epochs
-    model_path = save_model(model, run_dir / "final_production_model.pt")
+    model_path = save_model(model, model_dir / "final_production_model.pt")
     result: dict[str, Any] = {
         "model_path": str(model_path),
         "history": history,
@@ -482,8 +492,13 @@ def _train_final_production_model(
         test_loader = builder.load(
             test_atoms, batch_size=config.batch_size, shuffle=False
         )
+        tester = tester_class(device=device)
+        history["checkpoint_models"] = evaluate_checkpoint_models(
+            model, history, checkpoint_interval,
+            {"test_1": test_loader}, tester, device,
+        )
         result["hf_test_metrics"] = evaluate_model(
-            model, test_loader, tester_class(device=device)
+            model, test_loader, tester
         )
     complete_final_production_model(state, result=result)
     store.save(state)

@@ -44,6 +44,7 @@ _ALLOWED_FIELDS = {
     "scheduler_lr_factor", "scheduler_patience", "ema_decay",
     "early_stopping", "stopping_patience", "patience", "restore_best",
     "verbose",
+    "final_production_model_checkpoint_epochs",
 }
 
 
@@ -79,6 +80,7 @@ class ActiveLearningConfig:
     trainer_options: dict[str, Any]
     loss_kwargs: dict[str, float]
     checkpoint_epochs: int | None
+    final_production_model_checkpoint_epochs: int | None
 
 
 def load_config(config_path: Path) -> ActiveLearningConfig:
@@ -179,6 +181,9 @@ def load_config(config_path: Path) -> ActiveLearningConfig:
         trainer_options=parse_trainer_options(config),
         loss_kwargs=loss_kwargs,
         checkpoint_epochs=checkpoint_epochs,
+        final_production_model_checkpoint_epochs=_optional_positive_int(
+            config, "final_production_model_checkpoint_epochs"
+        ),
     )
 
 

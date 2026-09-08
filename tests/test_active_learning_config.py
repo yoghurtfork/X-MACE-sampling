@@ -57,3 +57,15 @@ class AcquisitionConfigTests(unittest.TestCase):
         for field in ('max_seeds_per_round', 'uncertainty_threshold'):
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'Unknown'):
                 self.load({**self.config, field: 1})
+
+    def test_final_checkpoint_interval(self):
+        field = 'final_production_model_checkpoint_epochs'
+        self.assertIsNone(getattr(self.load(self.config), field))
+        for value in (None, 1, 10):
+            with self.subTest(value=value):
+                config = self.load({**self.config, field: value, 'checkpoint_epochs': 3})
+                self.assertEqual(getattr(config, field), value)
+                self.assertEqual(config.checkpoint_epochs, 3)
+        for value in (0, -1, True, 1.5, '10', float('nan'), float('inf')):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, field):
+                self.load({**self.config, field: value})
