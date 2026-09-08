@@ -299,11 +299,10 @@ def _run_one_round(
     all_scores[unacquired] = uncertainty.score
     selection = select_acquisitions(
         all_scores,
-        grid.coordinates,
         already_acquired=state["acquired_indices"],
-        grid_shape=config.grid_shape,
-        uncertainty_threshold=config.uncertainty_threshold,
-        max_seeds=config.max_seeds_per_round,
+        acquired_per_round=config.acquired_per_round,
+        acquire_from_uncertain_fraction=config.acquire_from_uncertain_fraction,
+        rng=np.random.default_rng(config.seed + round_number),
     )
     _complete_round(
         state, store, committee.training, evaluation_source, unacquired,
@@ -315,8 +314,8 @@ def _run_one_round(
             uncertainty.score,
         ),
     )
-    if not len(selection.seed_indices):
-        state["termination_reason"] = "No unacquired point exceeded the uncertainty threshold"
+    if not len(selection.acquired_indices):
+        state["termination_reason"] = "No unacquired geometries in the selected uncertainty fraction"
         store.save(state)
 
 
@@ -336,16 +335,12 @@ def _complete_round(
     if selection is None:
         selection_summary = {
             "eligible_indices": [],
-            "seed_indices": [],
-            "neighbour_indices": [],
             "acquired_indices": [],
         }
         acquired_after = state["acquired_indices"]
     else:
         selection_summary = {
             "eligible_indices": selection.eligible_indices.tolist(),
-            "seed_indices": selection.seed_indices.tolist(),
-            "neighbour_indices": selection.neighbour_indices.tolist(),
             "acquired_indices": selection.acquired_indices.tolist(),
         }
         acquired_after = sorted(

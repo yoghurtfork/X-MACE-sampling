@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -33,8 +34,8 @@ _LOSS_DEFAULTS = {
 _ACTIVE_DEFAULT_DEVICE = "cpu"
 _ALLOWED_FIELDS = {
     "lf_checkpoint", "hf_xyz", "hf_test_xyz", "grid_shape",
-    "initial_acquired_count", "n_rounds", "k", "max_seeds_per_round",
-    "uncertainty_threshold", "energy_uncertainty_weight",
+    "initial_acquired_count", "n_rounds", "k", "acquired_per_round",
+    "acquire_from_uncertain_fraction", "energy_uncertainty_weight",
     "force_uncertainty_weight", "seed", "device", "max_epochs",
     "final_max_epochs", "batch_size", "r_max", "transfer_lr",
     "final_transfer_lr", "energy_key", "forces_key", "hf_E0s",
@@ -58,8 +59,8 @@ class ActiveLearningConfig:
     initial_acquired_count: int
     n_rounds: int
     k: int
-    max_seeds_per_round: int
-    uncertainty_threshold: float
+    acquired_per_round: int
+    acquire_from_uncertain_fraction: float
     energy_uncertainty_weight: float
     force_uncertainty_weight: float
     seed: int
@@ -108,8 +109,15 @@ def load_config(config_path: Path) -> ActiveLearningConfig:
         raise ValueError("'initial_acquired_count' must be at least 'k'")
 
     n_rounds = _non_negative_int(config, "n_rounds")
-    max_seeds_per_round = _positive_int(config, "max_seeds_per_round")
-    uncertainty_threshold = _non_negative_number(config, "uncertainty_threshold")
+    acquired_per_round = _positive_int(config, "acquired_per_round")
+    acquire_from_uncertain_fraction = _non_negative_number(
+        config, "acquire_from_uncertain_fraction"
+    )
+    if (
+        not math.isfinite(acquire_from_uncertain_fraction)
+        or acquire_from_uncertain_fraction > 1.0
+    ):
+        raise ValueError("'acquire_from_uncertain_fraction' must be a finite number in [0, 1]")
     energy_uncertainty_weight = _non_negative_number(
         config, "energy_uncertainty_weight", default=1.0
     )
@@ -151,8 +159,8 @@ def load_config(config_path: Path) -> ActiveLearningConfig:
         initial_acquired_count=initial_acquired_count,
         n_rounds=n_rounds,
         k=k,
-        max_seeds_per_round=max_seeds_per_round,
-        uncertainty_threshold=uncertainty_threshold,
+        acquired_per_round=acquired_per_round,
+        acquire_from_uncertain_fraction=acquire_from_uncertain_fraction,
         energy_uncertainty_weight=energy_uncertainty_weight,
         force_uncertainty_weight=force_uncertainty_weight,
         seed=seed,
