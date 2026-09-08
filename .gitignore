@@ -210,6 +210,8 @@ tempCodeRunnerFile.py
 /sharc/structure_0006/
 /sharc/ethene_molcas/
 /sharc/ethene_molcas_scratch/
+/sharc/ethene_molcas_ktdc/
+/sharc/ethene_molcas_ktdc_scratch/
 /sharc/**/traj-allmols/
 
 # Ruff stuff:
