@@ -1,0 +1,16 @@
+basis cc-pVDZ
+ras2 2
+nactel 2
+inactive 7
+roots 3 
+
+no-douglas-kroll
+cholesky
+method CASSCF
+
+
+#     Infos:
+#     lim_yt@DESKTOP-JKO4QSC
+#     Date: 2026-09-05 10:45:39.700319
+#     Current directory: portable ethene_molcas_22 setup
+

@@ -1,0 +1,6 @@
+ncpu 1
+memory 4000
+
+molcas $MOLCAS
+driver $MOLCAS_DRIVER
+scratchdir $SHARC_SCRATCH/Singlet_1/TRAJ_00059/QM
