@@ -280,11 +280,11 @@ def _selection_descriptors(model_instance: Any, atoms: list[Any], config: dict[s
             for atom in atoms:
                 energy = descriptors.get_descriptor("energies", atom)
                 tensor = torch.as_tensor(energy, dtype=torch.get_default_dtype(), device=device).reshape(1, -1, 1)
-                values.append(model_instance.perm_encoder(tensor).squeeze(0).detach().cpu().tolist())
+                values.append(model_instance.autoencoder_heads[0].perm_encoder(tensor).squeeze(0).detach().cpu().tolist())
     elif name == "hessian_norm":
         values = descriptors.get_descriptor(name, atoms, **kwargs)
     else:
-        values = [descriptors.get_descriptor(name, atom, encoder=model_instance.perm_encoder, **kwargs) for atom in atoms]
+        values = [descriptors.get_descriptor(name, atom, encoder=model_instance.autoencoder_heads[0].perm_encoder, **kwargs) for atom in atoms]
     matrix = np.asarray(values, dtype=float)
     if matrix.ndim == 1:
         matrix = matrix.reshape(-1, 1)
