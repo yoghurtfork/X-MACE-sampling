@@ -157,11 +157,10 @@ def resolved_e0s(builder: Any) -> dict[str, float]:
     from ase.data import chemical_symbols
 
     metadata = builder.get_metadata()
+    energies = metadata.atomic_energies[0]
     return {
         chemical_symbols[int(atomic_number)]: float(energy)
-        for atomic_number, energy in zip(
-            metadata.atomic_numbers, metadata.atomic_energies
-        )
+        for atomic_number, energy in zip(metadata.atomic_numbers, energies)
     }
 
 
