@@ -93,7 +93,7 @@ def _run_scratch_stage(
                 "status": "running", "folds": fold_results,
                 "completed_folds": len(fold_results), "total_folds": config["k"],
             })
-        aggregate = _aggregate_test_sets(fold_results)
+        aggregate = _aggregate_test_sets(fold_results, config["compute_nacs"])
         run_state.update_stage(stage_name, {
             "status": "completed", "folds": fold_results,
             "completed_folds": len(fold_results), "total_folds": config["k"],
@@ -190,7 +190,9 @@ def _run_transfer_stage(config: dict[str, Any], device: Any, run_state: state.Ru
         run_state.update_stage("transfer", {
             "status": "completed", "folds": fold_results,
             "completed_folds": len(fold_results), "total_folds": config["k"],
-            "aggregate_test_metrics": _aggregate_test_sets(fold_results),
+            "aggregate_test_metrics": _aggregate_test_sets(
+                fold_results, config["compute_nacs"]
+            ),
             **_runtime_e0("hf", config, data.resolved_e0s(hf_builder)),
         })
         return
@@ -227,18 +229,22 @@ def _train_once(
     trained_model, history = model.build_trainer(config, stage_name, device).train_model(
         trained_model, train_loader, valid_loader, model.build_loss(config, device),
         checkpoint_epoch=config["checkpoint_epochs"],
+        compute_nacs=config["compute_nacs"],
         **checkpoint_kwargs,
     )
     model_path = state.save_model(trained_model, run_state.run_dir / model_filename)
     from mace.testing import Tester
 
     tester = Tester(device=device)
-    test_metrics = evaluation.evaluate_test_sets(trained_model, test_loaders, tester)
+    test_metrics = evaluation.evaluate_test_sets(
+        trained_model, test_loaders, tester, compute_nacs=config["compute_nacs"]
+    )
     best_epoch = int(history["best_epoch"])
     for metrics in test_metrics.values():
         metrics["best_epoch"] = best_epoch
     checkpoint_entries = evaluation.evaluate_checkpoint_models(
-        trained_model, history, config["checkpoint_epochs"], test_loaders, tester, device
+        trained_model, history, config["checkpoint_epochs"], test_loaders, tester, device,
+        compute_nacs=config["compute_nacs"],
     )
     history["checkpoint_models"] = checkpoint_entries
     artifacts: dict[str, str] = {}
@@ -313,13 +319,18 @@ def _select_indices(descriptor_matrix: np.ndarray, config: dict[str, Any]) -> np
     return selected
 
 
-def _aggregate_test_sets(fold_results: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def _aggregate_test_sets(
+    fold_results: dict[str, dict[str, Any]], compute_nacs: bool
+) -> dict[str, Any]:
     test_names = next(iter(fold_results.values()))["test_metrics"]
     return {
-        name: evaluation.aggregate_fold_metrics({
-            fold_name: {"metrics": fold["test_metrics"][name]}
-            for fold_name, fold in fold_results.items()
-        })
+        name: evaluation.aggregate_fold_metrics(
+            {
+                fold_name: {"metrics": fold["test_metrics"][name]}
+                for fold_name, fold in fold_results.items()
+            },
+            compute_nacs=compute_nacs,
+        )
         for name in test_names
     }
 

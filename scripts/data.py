@@ -49,6 +49,7 @@ def make_builder(config: dict[str, Any], fidelity: str) -> Any:
         cutoff=config["r_max"],
         energy_key=config["energy_key"],
         forces_key=config["forces_key"],
+        nacs_key=config["nacs_key"],
         E0s=config.get(f"{fidelity}_E0s"),
     )
 

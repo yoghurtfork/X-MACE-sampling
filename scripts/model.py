@@ -34,6 +34,8 @@ def build_scratch_model(metadata: Any, config: dict[str, Any], device: Any) -> A
         metadata,
         preset=config["preset"],
         load_base=config["foundation_model"],
+        compute_nacs=config["compute_nacs"],
+        nac_num=config["nac_num"] if config["compute_nacs"] else 0,
     ).to(device)
 
 

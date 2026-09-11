@@ -53,6 +53,8 @@ _DEFAULTS: dict[str, Any] = {
     "preset": "default_ani",
     "energy_key": "REF_energy",
     "forces_key": "REF_forces",
+    "compute_nacs": False,
+    "nacs_key": "REF_nacs",
     "early_stopping": True,
     "restore_best": True,
     "verbose": True,
@@ -85,6 +87,7 @@ _ALLOWED_FIELDS = set(_DEFAULTS) | _PATH_FIELDS | _TEST_PATH_FIELDS | _OPTIONAL_
     "ema_decay",
     "scheduler_patience",
     "stopping_patience",
+    "nac_num",
 } | set(_TRAINER_NUMBER_FIELDS)
 
 
@@ -267,6 +270,14 @@ def _validate_common(config: dict[str, Any]) -> None:
     config["preset"] = _required_string(config, "preset")
     config["energy_key"] = _required_string(config, "energy_key")
     config["forces_key"] = _required_string(config, "forces_key")
+    _require_bool(config["compute_nacs"], "'compute_nacs'")
+    config["nacs_key"] = _required_string(config, "nacs_key")
+    if config["compute_nacs"]:
+        if "nac_num" not in config:
+            raise ConfigError("'nac_num' is required when 'compute_nacs' is true")
+        config["nac_num"] = _positive_integer(config["nac_num"], "'nac_num'")
+    elif "nac_num" in config:
+        config["nac_num"] = _positive_integer(config["nac_num"], "'nac_num'")
     trainer_options = parse_trainer_options(config)
     config.update(trainer_options)
     for key in ("generate_plots", "pca"):
