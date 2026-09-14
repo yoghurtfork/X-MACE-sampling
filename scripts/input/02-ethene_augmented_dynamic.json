@@ -7,10 +7,10 @@
   "k": 5,
   "lf_xyz": "../../data/A01_ethene/dynamic/A01_ethene_dynamic_CASSCF_sanity_defaults_filtered_first_740_augmented.xyz",
   "lf_test_xyz": [
-    "../../data/A01_ethene/dynamic/A01_ethene_dynamic_CASSCF_custom_test_set.xyz",
-    "../../data/A01_ethene/dynamic/A01_ethene_dynamic_CASSCF_custom_test_set_gap_01.xyz",
-    "../../data/A01_ethene/dynamic/A01_ethene_dynamic_CASSCF_custom_test_set_gap_12.xyz",
-    "../../data/A01_ethene/dynamic/A01_ethene_dynamic_CASSCF_custom_test_set_uniform.xyz"
+    "../../data/A01_ethene/test_sets/A01_ethene_dynamic_CASSCF_custom_test_set.xyz",
+    "../../data/A01_ethene/test_sets/A01_ethene_dynamic_CASSCF_custom_test_set_gap_01.xyz",
+    "../../data/A01_ethene/test_sets/A01_ethene_dynamic_CASSCF_custom_test_set_gap_12.xyz",
+    "../../data/A01_ethene/test_sets/A01_ethene_dynamic_CASSCF_custom_test_set_uniform.xyz"
   ],
   "lf_n_geometries": 7400,
   "seed": 42,

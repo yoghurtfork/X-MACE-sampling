@@ -5,7 +5,7 @@
   "strategy_kwargs": {},
   "cross_validation": true,
   "k": 5,
-  "lf_xyz": "../../data/A01_ethene/extended_grid/A01_ethene_grid_static_CASSCF_augmented_manual.xyz",
+  "lf_xyz": "../../data/A01_ethene/dynamic/A01_ethene_dynamic_CASSCF_sanity_defaults_filtered_first_740_augmented.xyz",
   "lf_test_xyz": [
     "../../data/A01_ethene/test_sets/A01_ethene_dynamic_CASSCF_custom_test_set.xyz",
     "../../data/A01_ethene/test_sets/A01_ethene_dynamic_CASSCF_custom_test_set_gap_01.xyz",
@@ -25,7 +25,7 @@
     "H": -15.357929595328724
   },
   "preset": "default_ani",
-  "energy_decoder": "matrix",
+  "energy_decoder": "direct",
   "foundation_model": "ani500k",
   "optimiser_lr": 0.001,
   "optimiser_weight_decay": 5e-07,
