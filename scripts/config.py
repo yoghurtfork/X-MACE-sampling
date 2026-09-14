@@ -51,6 +51,7 @@ _DEFAULTS: dict[str, Any] = {
     "strategy_kwargs": {},
     "checkpoint_epochs": None,
     "preset": "default_ani",
+    "energy_decoder": "matrix",
     "energy_key": "REF_energy",
     "forces_key": "REF_forces",
     "compute_nacs": False,

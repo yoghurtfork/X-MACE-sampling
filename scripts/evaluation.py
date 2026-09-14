@@ -26,17 +26,17 @@ def evaluate_model(
         ),
     }
     if compute_nacs:
-        phase_nac_by_state = tester.get_nac_phase_rmse_by_pair()
-        abs_nac_by_state = tester.get_nac_abs_mae_by_pair()
+        smooth_nac_phase_by_pair = tester.get_smooth_nac_phase_mae_by_pair()
+        raw_nac_phase_by_pair = tester.get_raw_nac_phase_mae_by_pair()
         metrics.update(
             {
-                "nac_phase_rmse": float(tester.get_nac_phase_rmse()),
-                "nac_abs_mae": float(tester.get_nac_abs_mae()),
-                "nac_phase_rmse_by_pair": np.asarray(
-                    phase_nac_by_state, dtype=float
+                "smooth_nac_phase_mae": float(tester.get_smooth_nac_phase_mae()),
+                "raw_nac_phase_mae": float(tester.get_raw_nac_phase_mae()),
+                "smooth_nac_phase_mae_by_pair": np.asarray(
+                    smooth_nac_phase_by_pair, dtype=float
                 ).reshape(-1).tolist(),
-                "nac_abs_mae_by_pair": np.asarray(
-                    abs_nac_by_state, dtype=float
+                "raw_nac_phase_mae_by_pair": np.asarray(
+                    raw_nac_phase_by_pair, dtype=float
                 ).reshape(-1).tolist(),
             }
         )
@@ -92,8 +92,14 @@ def evaluate_checkpoint_models(
         if compute_nacs:
             result.update(
                 {
-                    "test_nac_phase_rmse": primary["nac_phase_rmse"],
-                    "test_nac_abs_mae": primary["nac_abs_mae"],
+                    "test_smooth_nac_phase_mae": primary["smooth_nac_phase_mae"],
+                    "test_smooth_nac_phase_mae_by_pair": primary[
+                        "smooth_nac_phase_mae_by_pair"
+                    ],
+                    "test_raw_nac_phase_mae": primary["raw_nac_phase_mae"],
+                    "test_raw_nac_phase_mae_by_pair": primary[
+                        "raw_nac_phase_mae_by_pair"
+                    ],
                 }
             )
         results.append(result)
@@ -111,8 +117,10 @@ def aggregate_fold_metrics(
     scalar_keys = ["energy_mae_ev", "force_mae_ev_per_ang"]
     per_item_keys = ["energy_mae_by_state_ev", "force_mae_by_state_ev_per_ang"]
     if compute_nacs:
-        scalar_keys.extend(["nac_phase_rmse", "nac_abs_mae"])
-        per_item_keys.extend(["nac_phase_rmse_by_pair", "nac_abs_mae_by_pair"])
+        scalar_keys.extend(["smooth_nac_phase_mae", "raw_nac_phase_mae"])
+        per_item_keys.extend(
+            ["smooth_nac_phase_mae_by_pair", "raw_nac_phase_mae_by_pair"]
+        )
     for key in scalar_keys:
         values = np.asarray([metric[key] for metric in metrics], dtype=float)
         result[key] = {"mean": float(np.mean(values)), "variance": float(np.var(values))}

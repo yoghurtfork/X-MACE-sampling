@@ -31,6 +31,7 @@
     "H": -15.712048126191444
   },
   "preset": "default_ani",
+  "energy_decoder": "matrix",
   "foundation_model": "ani500k",
   "optimiser_lr": 0.001,
   "optimiser_weight_decay": 5e-07,
