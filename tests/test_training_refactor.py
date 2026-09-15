@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -117,6 +118,39 @@ class StateAndEvaluationTests(unittest.TestCase):
 
 
 class UnifiedTrainTests(unittest.TestCase):
+    def test_cross_validation_uses_a_checkpoint_directory_per_fold(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            run_dir = Path(temporary_directory)
+            run_state = MagicMock(run_dir=run_dir)
+            stage_data = SimpleNamespace(
+                atoms=[object(), object(), object(), object()],
+                builder=MagicMock(), test_sets={}, resolved_e0s={},
+            )
+            config = {
+                "cross_validation": True, "k": 2, "seed": 42,
+                "generate_plots": False, "compute_nacs": False,
+            }
+            with (
+                patch.object(train.data, "load_stage_data", return_value=stage_data),
+                patch.object(train, "_scratch_initial_model", return_value=MagicMock()),
+                patch.object(
+                    train.data, "kfold_splits",
+                    return_value=[(np.array([0, 1]), np.array([2, 3])),
+                                  (np.array([2, 3]), np.array([0, 1]))],
+                ),
+                patch.object(
+                    train, "_train_once",
+                    return_value={"artifacts": {}, "test_metrics": {}},
+                ) as train_once,
+                patch.object(train, "_aggregate_test_sets", return_value={}),
+            ):
+                train._run_scratch_stage("lf", config, "cpu", run_state)
+
+            self.assertEqual(
+                [call.kwargs["checkpoint_dir"] for call in train_once.call_args_list],
+                [run_dir / "lf" / "fold_1", run_dir / "lf" / "fold_2"],
+            )
+
     def _run_dispatch(self, mode: str) -> tuple[MagicMock, MagicMock, MagicMock, str]:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -178,4 +212,3 @@ class JobControllerTests(unittest.TestCase):
         with patch.object(job_controller, "_run_job", return_value=Path("run_0/result.json")):
             job_controller._gpu_worker(1, jobs, results)
         self.assertEqual(results.get_nowait()[1], 1)
-

@@ -79,6 +79,7 @@ def _run_scratch_stage(
                 valid_atoms=_atoms_at(stage_data.atoms, valid_indices),
                 test_sets=stage_data.test_sets, config=config, device=device,
                 run_state=run_state, model_filename=f"{prefix}_fold_{fold_number}.pt",
+                checkpoint_dir=run_state.run_dir / stage_name / f"fold_{fold_number}",
                 seed=config["seed"] + fold_number,
             )
             result["fold_seed"] = config["seed"] + fold_number
@@ -115,6 +116,7 @@ def _run_scratch_stage(
         builder=builder, train_atoms=train_atoms,
         valid_atoms=_atoms_at(stage_data.atoms, valid_indices), test_sets=stage_data.test_sets,
         config=config, device=device, run_state=run_state, model_filename=f"{prefix}.pt",
+        checkpoint_dir=run_state.run_dir / stage_name,
         seed=config["seed"],
     )
     result.update({"train_indices": train_indices, "validation_indices": valid_indices})
@@ -175,7 +177,9 @@ def _run_transfer_stage(config: dict[str, Any], device: Any, run_state: state.Ru
                 train_atoms=_atoms_at(selected_hf_atoms, train_indices),
                 valid_atoms=_atoms_at(selected_hf_atoms, fold_valid_indices), test_sets=hf_test_sets,
                 config=config, device=device, run_state=run_state,
-                model_filename=f"{prefix}_fold_{fold_number}.pt", seed=config["seed"] + fold_number,
+                model_filename=f"{prefix}_fold_{fold_number}.pt",
+                checkpoint_dir=run_state.run_dir / "transfer" / f"fold_{fold_number}",
+                seed=config["seed"] + fold_number,
             )
             result["fold_seed"] = config["seed"] + fold_number
             result["selected_train_indices"] = train_indices
@@ -200,7 +204,8 @@ def _run_transfer_stage(config: dict[str, Any], device: Any, run_state: state.Ru
         initial_model=initial_model, stage_name="transfer", builder=hf_builder,
         train_atoms=selected_hf_atoms, valid_atoms=_atoms_at(hf_atoms, valid_indices),
         test_sets=hf_test_sets, config=config, device=device, run_state=run_state,
-        model_filename=f"{prefix}.pt", seed=config["seed"],
+        model_filename=f"{prefix}.pt", checkpoint_dir=run_state.run_dir / "transfer",
+        seed=config["seed"],
     )
     result["selection_pool_indices"] = pool_indices
     result["validation_indices"] = valid_indices
@@ -213,7 +218,8 @@ def _run_transfer_stage(config: dict[str, Any], device: Any, run_state: state.Ru
 def _train_once(
     *, initial_model: Any, stage_name: str, builder: Any, train_atoms: list[Any],
     valid_atoms: list[Any], test_sets: dict[str, list[Any]], config: dict[str, Any],
-    device: Any, run_state: state.RunState, model_filename: str, seed: int,
+    device: Any, run_state: state.RunState, model_filename: str, checkpoint_dir: Path,
+    seed: int,
 ) -> dict[str, Any]:
     _seed_everything(seed)
     train_loader = data.make_loader(builder, train_atoms, config["batch_size"], shuffle=True)
@@ -221,11 +227,10 @@ def _train_once(
     test_loaders = data.make_test_loaders(builder, test_sets, config["batch_size"])
     trained_model = model.apply_training_strategy(initial_model, config).to(device)
     started = time.monotonic()
-    checkpoint_kwargs = (
-        {"checkpoint_models_dir": run_state.run_dir}
-        if isinstance(config["checkpoint_epochs"], int)
-        else {}
-    )
+    checkpoint_kwargs: dict[str, Path] = {}
+    if isinstance(config["checkpoint_epochs"], int):
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_kwargs["checkpoint_models_dir"] = checkpoint_dir
     trained_model, history = model.build_trainer(config, stage_name, device).train_model(
         trained_model, train_loader, valid_loader, model.build_loss(config, device),
         checkpoint_epoch=config["checkpoint_epochs"],
