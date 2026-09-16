@@ -418,6 +418,7 @@ run_trajectory() {
 run_trajectories() {
     local work_dir=$1
     local trajectories=()
+    local failed=0
     mapfile -d '' trajectories < <(find "$work_dir" -type d -name 'TRAJ_*' -print0 | sort -z)
     if [[ ${#trajectories[@]} -eq 0 ]]; then
         echo "No TRAJ_* directories found in $work_dir." >&2
@@ -427,12 +428,19 @@ run_trajectories() {
     if [[ ${#gpu_ids[@]} -eq 0 ]]; then
         local trajectory_dir
         for trajectory_dir in "${trajectories[@]}"; do
-            run_trajectory "$trajectory_dir" || return 1
+            if ! run_trajectory "$trajectory_dir"; then
+                echo "Trajectory failed: $trajectory_dir. Last lines of driver.log:" >&2
+                tail -n 40 "$trajectory_dir/driver.log" >&2 || true
+                failed=1
+            fi
         done
-        return 0
+        if [[ $failed -ne 0 ]]; then
+            echo "One or more trajectories failed; all remaining trajectories were attempted." >&2
+        fi
+        return "$failed"
     fi
 
-    local next=0 failed=0 gpu_id trajectory_dir pid
+    local next=0 gpu_id trajectory_dir pid
     while [[ $next -lt ${#trajectories[@]} ]]; do
         local pids=() labels=()
         for gpu_id in "${gpu_ids[@]}"; do
@@ -450,8 +458,11 @@ run_trajectories() {
                 failed=1
             fi
         done
-        [[ $failed -eq 0 ]] || return 1
     done
+    if [[ $failed -ne 0 ]]; then
+        echo "One or more trajectories failed; all remaining trajectories were attempted." >&2
+    fi
+    return "$failed"
 }
 
 for job in "${validated_jobs[@]}"; do
