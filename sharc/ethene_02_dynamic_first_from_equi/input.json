@@ -2,7 +2,7 @@
   "ignore": false,
   "mode": "run",
   "reset": true,
-  "model_file": "ethene_02_dynamic_first.pt",
+  "model_file": "ethene_02_dynamic_first_from_equi.pt",
   "device": "cuda",
   "energy_unit": "eV",
   "distance_unit": "Ang",
