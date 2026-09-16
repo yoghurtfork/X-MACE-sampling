@@ -213,6 +213,7 @@ tempCodeRunnerFile.py
 /sharc/ethene_molcas_ktdc/
 /sharc/ethene_molcas_ktdc_scratch/
 /sharc/**/traj-allmols/
+!/sharc/ethene_02_dynamic_first_from_equi/traj-allmols/
 
 # Ruff stuff:
 .ruff_cache/

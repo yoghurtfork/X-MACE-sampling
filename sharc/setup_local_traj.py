@@ -33,14 +33,17 @@ tmax {tmax:.6f}
 stepsize {stepsize:.6f}
 nsubsteps 25
 surf diagonal
-coupling ktdc
+coupling nacdr
 gradcorrect
-ekincorrect parallel_vel
+ekincorrect parallel_nac
 reflect_frustrated none
 decoherence_scheme edc
 decoherence_param 0.1
 hopping_procedure sharc
 grad_all
+nac_all
+write_grad
+write_nacdr
 nospinorbit
 output_format ascii
 output_dat_steps 1
